@@ -2,7 +2,7 @@
 'use strict';
 
 const API = 'https://engrave.app.n8n.cloud/webhook/grava-app';
-const THREE_URL = './vendor/three-viewer.min.js?v=1';
+const THREE_URL = './vendor/three/three-viewer.min.js?v=2';
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (id) => document.getElementById(id);
@@ -18,6 +18,9 @@ const state = {
   sending: false,
   buying: false,
   editorOpen: false,
+  noSwipes: false,
+  cad: null,        // открытый конструктор
+  cadBusy: false,
 };
 
 /* ---------- Помощники Телеги ---------- */
@@ -138,7 +141,8 @@ function formatNumber(n) {
 function isModel(o) { return o.kind === 'model'; }
 function fileFormat(o) { return isModel(o) ? String(o.format || 'stl').toUpperCase() : 'DXF'; }
 function isStl(o) { return isModel(o) && fileFormat(o) === 'STL'; }
-function kindEmoji(o) { return isModel(o) ? '🧊' : '🔥'; }
+function kindEmoji(o) { return o.kind === 'cad' ? '📐' : isModel(o) ? '🧊' : '🔥'; }
+function hasFile(o) { return o.has_file !== false; } // в старых ответах поля нет — файл есть
 
 function formatLabel(o) {
   return o.size_mm ? fileFormat(o) + ' · ' + o.size_mm + ' мм' : fileFormat(o);
@@ -195,28 +199,36 @@ function showScreen(name) {
 
 function renderView() {
   const inApp = !$('app').hidden;
-  const inDetail = !!state.detail;
-  $('view-works').hidden = inDetail || state.tab !== 'works';
-  $('view-balance').hidden = inDetail || state.tab !== 'balance';
-  $('view-editor').hidden = inDetail || state.tab !== 'editor';
+  const inCad = !!state.cad;
+  const inDetail = !inCad && !!state.detail;
+  const overlay = inCad || inDetail; // экраны поверх вкладок
+  $('view-works').hidden = overlay || state.tab !== 'works';
+  $('view-balance').hidden = overlay || state.tab !== 'balance';
+  $('view-editor').hidden = overlay || state.tab !== 'editor';
   $('view-detail').hidden = !inDetail;
-  $('tabbar').hidden = !inApp || inDetail;
-  document.body.classList.toggle('no-tabbar', !inApp || inDetail);
+  $('view-cad').hidden = !inCad;
+  $('tabbar').hidden = !inApp || overlay;
+  document.body.classList.toggle('no-tabbar', !inApp || overlay);
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('is-active', t.dataset.tab === state.tab);
   });
 
-  // В редакторе рисуют пальцем — свайп вниз не должен сворачивать приложение.
-  const editorOpen = inApp && !inDetail && state.tab === 'editor';
+  const editorOpen = inApp && !overlay && state.tab === 'editor';
   if (editorOpen !== state.editorOpen) {
     state.editorOpen = editorOpen;
+    if (editorOpen) renderEditor();
+  }
+
+  // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
+  const noSwipes = editorOpen || (inApp && inCad);
+  if (noSwipes !== state.noSwipes) {
+    state.noSwipes = noSwipes;
     if (supports('7.7')) {
       try {
-        if (editorOpen) tg.disableVerticalSwipes();
+        if (noSwipes) tg.disableVerticalSwipes();
         else tg.enableVerticalSwipes();
       } catch (e) { /* ок */ }
     }
-    if (editorOpen) renderEditor();
   }
 }
 
@@ -263,8 +275,10 @@ function renderSkeleton() {
 }
 
 function workCard(o) {
-  const card = el('button', 'work');
-  card.type = 'button';
+  const isCadDraft = o.kind === 'cad'; // деталь из бота, файла ещё нет
+  const card = el('div', 'work');
+  card.setAttribute('role', 'button');
+  card.tabIndex = 0;
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
   card.appendChild(thumb);
@@ -272,14 +286,40 @@ function workCard(o) {
   const body = el('div', 'work-body');
   body.appendChild(el('div', 'work-title', o.title || 'Без названия'));
   const meta = el('div', 'work-meta');
-  meta.appendChild(el('span', '', formatLabel(o)));
-  meta.appendChild(el('span', '', formatDate(o.date)));
+  if (isCadDraft) {
+    meta.classList.add('is-wrap');
+    meta.appendChild(el('span', '', 'Деталь по размерам · файла ещё нет'));
+  } else {
+    meta.appendChild(el('span', '', formatLabel(o)));
+    meta.appendChild(el('span', '', formatDate(o.date)));
+  }
   body.appendChild(meta);
+
+  if (isCadDraft || o.cad === true) {
+    const btn = el('button', 'work-cad-btn', isCadDraft ? '📐 Открыть в конструкторе' : '📐 В конструктор');
+    btn.type = 'button';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCad(o.id);
+    });
+    body.appendChild(btn);
+  }
   card.appendChild(body);
 
-  card.addEventListener('click', () => {
+  const open = () => {
+    if (isCadDraft) {
+      openCad(o.id);
+      return;
+    }
     haptic();
     openDetail(o);
+  };
+  card.addEventListener('click', open);
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open();
+    }
   });
   return card;
 }
@@ -304,8 +344,9 @@ function openDetail(o) {
 
   const preview = $('detail-preview');
   fillPreview(preview, o);
-  preview.classList.toggle('is-clickable', isStl(o));
-  if (isStl(o)) preview.appendChild(el('div', 'badge-3d', '🧊 3D'));
+  const can3d = isStl(o) && hasFile(o);
+  preview.classList.toggle('is-clickable', can3d);
+  if (can3d) preview.appendChild(el('div', 'badge-3d', '🧊 3D'));
 
   $('detail-title').textContent = o.title || 'Без названия';
 
@@ -315,8 +356,9 @@ function openDetail(o) {
     .filter(Boolean)
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
-  $('detail-3d').hidden = !isStl(o);
-  $('detail-edit').hidden = o.editable !== true;
+  $('detail-3d').hidden = !can3d;
+  $('detail-edit').hidden = o.editable !== true || o.cad === true; // у деталей из конструктора — свой редактор
+  $('detail-cad').hidden = o.cad !== true;
   $('detail-note').textContent = !isModel(o)
     ? 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.'
     : isStl(o)
@@ -327,7 +369,9 @@ function openDetail(o) {
   window.scrollTo(0, 0);
 
   tg.BackButton.show();
-  tg.MainButton.setParams({ text: '📩 Прислать в чат', is_active: true, is_visible: true });
+  // «Прислать в чат» — только если файл есть.
+  if (hasFile(o)) tg.MainButton.setParams({ text: '📩 Прислать в чат', is_active: true, is_visible: true });
+  else tg.MainButton.hide();
 }
 
 function closeDetail() {
@@ -342,12 +386,19 @@ function closeDetail() {
 function goBack() {
   haptic();
   if (state.viewer) closeViewer();
+  else if (state.cad) closeCad();
   else if (state.detail) closeDetail();
+}
+
+// Одна кнопка Телеги на два экрана: на экране работы — «Прислать в чат», в конструкторе — файл детали.
+function onMainButton() {
+  if (state.cad) cadExport();
+  else sendToChat();
 }
 
 async function sendToChat() {
   const o = state.detail;
-  if (!o || state.sending) return;
+  if (!o || state.sending || !hasFile(o)) return;
   haptic();
   state.sending = true;
   tg.MainButton.showProgress(false);
@@ -380,6 +431,16 @@ function renderBalance() {
   const free3d = me.free_3d === true;
   $('gift').hidden = !free3d;
   $('price-model-note').hidden = !free3d;
+
+  // Детали по размерам. В старых ответах API цены нет — строку не показываем.
+  const cadPrice = prices.cad;
+  $('price-cad-row').hidden = cadPrice == null;
+  if (cadPrice != null) {
+    $('price-cad').textContent = cadPrice + ' кр.';
+    $('price-cad-note').hidden = me.free_cad !== true;
+    $('price-cad-edit').textContent = prices.cad_edit != null ? 'правка словами — ' + prices.cad_edit + ' кр.' : '';
+    $('price-cad-edit').hidden = prices.cad_edit == null;
+  }
 
   // Поштучно оплаченные 3D-модели. Нет поля или 0 — строку не показываем.
   const modelsLeft = Number(me.models_left) || 0;
@@ -793,6 +854,9 @@ function bindEvents() {
   });
 
   $('detail-3d').addEventListener('click', openViewer);
+  $('detail-cad').addEventListener('click', () => {
+    if (state.detail) openCad(state.detail.id);
+  });
   $('detail-edit').addEventListener('click', () => {
     if (state.detail) openOrderInEditor(state.detail);
   });
@@ -812,9 +876,10 @@ function bindEvents() {
   });
 
   bindEditor();
+  bindCad();
 
   tg.BackButton.onClick(goBack);
-  tg.MainButton.onClick(sendToChat);
+  tg.MainButton.onClick(onMainButton);
 
   // Вернулись в приложение (например, из чата с ботом) — тихо обновим данные.
   document.addEventListener('visibilitychange', () => {
@@ -845,6 +910,10 @@ function start() {
 
   bindEvents();
   loadMe(true);
+
+  // Бот открывает конструктор кнопкой «📐 Открыть конструктор» со ссылкой ?cad=<id>.
+  const cadId = cadIdFromUrl();
+  if (cadId) openCad(cadId);
 }
 
 // editor.js подключается после этого файла — стартуем, когда загрузятся оба.

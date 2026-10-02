@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -49,6 +49,7 @@
       <div class="detail-meta" id="detail-meta"></div>
       <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
       <button class="btn btn-secondary btn-wide detail-edit" id="detail-edit" type="button" hidden>✏️ Править в редакторе</button>
+      <button class="btn btn-secondary btn-wide detail-edit" id="detail-cad" type="button" hidden>📐 В конструктор</button>
       <p class="note" id="detail-note"></p>
     </section>
 
@@ -74,11 +75,55 @@
       <div class="card list">
         <div class="row"><span>🔥 Чертёж / эскиз</span><b id="price-image">1 кр.</b></div>
         <div class="row"><span>🧊 3D-модель<span class="row-note" id="price-model-note" hidden> (первая — бесплатно)</span></span><b id="price-model">4 кр.</b></div>
+        <div class="row" id="price-cad-row" hidden>
+          <span>📐 Деталь по размерам<span class="row-note" id="price-cad-note" hidden> (первая в подарок)</span><span class="row-sub" id="price-cad-edit"></span></span>
+          <b id="price-cad">2 кр.</b>
+        </div>
       </div>
 
       <h2 class="section-title">Пополнить</h2>
       <div id="packs" class="packs"></div>
       <p class="note">Оплата звёздами Telegram ⭐. Кредиты приходят сразу после оплаты.</p>
+    </section>
+
+    <!-- Конструктор деталей по размерам -->
+    <section id="view-cad" class="view" hidden>
+      <div id="cad-missing" class="empty" hidden>
+        <div class="empty-emoji">📐</div>
+        <p id="cad-missing-text">Деталь не найдена</p>
+        <button class="btn btn-primary cad-missing-btn" id="cad-missing-btn" type="button">К моим работам</button>
+      </div>
+
+      <div id="cad-main">
+        <h1 class="detail-title cad-title" id="cad-title">Загружаю деталь…</h1>
+        <div class="detail-meta"><span id="cad-format" hidden></span></div>
+
+        <div class="cad-preview" id="cad-preview">
+          <div class="cad-stage" id="cad-stage"></div>
+          <div class="cad-busy" id="cad-busy" hidden><span class="cad-busy-dot"></span>Считаю деталь…</div>
+          <div class="cad-engine" id="cad-engine" hidden>
+            <div class="spinner" id="cad-engine-spinner"></div>
+            <p id="cad-engine-text">Загружаю движок чертежей…</p>
+            <button class="btn btn-primary" id="cad-engine-retry" type="button" hidden>Попробовать ещё раз</button>
+          </div>
+        </div>
+        <p class="cad-dims" id="cad-dims"></p>
+
+        <div class="cad-error" id="cad-error" hidden>
+          <b class="cad-error-title">Деталь не собралась</b>
+          <details class="cad-details">
+            <summary>Подробности</summary>
+            <pre id="cad-log"></pre>
+          </details>
+          <button class="btn btn-primary btn-wide" id="cad-fix" type="button">🔧 Починить нейронкой</button>
+          <p class="cad-fix-limit" id="cad-fix-limit" hidden>Лимит починок исчерпан. Опиши в чате, что не так, — бот перечертит (1 кр.)</p>
+        </div>
+
+        <div id="cad-params" class="cad-params"></div>
+        <button class="btn btn-secondary btn-wide cad-reset" id="cad-reset" type="button" hidden>↺ Вернуть размеры</button>
+        <p class="note">Размеры здесь меняются бесплатно. Поменять форму (добавить отверстие, паз, надпись) — напиши в чате словами, 1 кр.</p>
+        <p class="cad-credit">Движок: <a href="https://github.com/openscad/openscad" id="cad-credit" target="_blank" rel="noopener">OpenSCAD (GPL-2.0)</a></p>
+      </div>
     </section>
 
     <!-- Вкладка «Редактор» -->
@@ -203,7 +248,8 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
-  <script src="editor.js?v=5"></script>
+  <script src="app.js?v=6"></script>
+  <script src="editor.js?v=6"></script>
+  <script src="cad.js?v=1"></script>
 </body>
 </html>

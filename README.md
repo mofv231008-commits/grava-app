@@ -11,7 +11,10 @@
 | `style.css` | оформление (цвета берутся из темы Telegram) |
 | `app.js` | логика: запросы к API, вкладки, экран работы, оплата, 3D |
 | `editor.js` | вкладка «Редактор»: рисование, обводка для ИИ, обрезка, отправка правки |
-| `vendor/three-viewer.min.js` | three.js + STLLoader + OrbitControls одним файлом (лежит прямо здесь, без внешних CDN) |
+| `cad.js` | конструктор деталей по размерам: параметры, превью, отправка файла, починка |
+| `cad-worker.js` | фоновый поток конструктора: считает деталь движком OpenSCAD |
+| `vendor/openscad/` | движок OpenSCAD (WebAssembly, GPL-2.0), см. `vendor/openscad/README.md` |
+| `vendor/three/three-viewer.min.js` | three.js + STLLoader + OrbitControls одним файлом (лежит прямо здесь, без внешних CDN) |
 | `.nojekyll` | чтобы GitHub Pages отдавал файлы как есть |
 
 API: `https://engrave.app.n8n.cloud/webhook/grava-app` (адрес в начале `app.js`).
@@ -27,16 +30,17 @@ API: `https://engrave.app.n8n.cloud/webhook/grava-app` (адрес в начал
 ## Как обновлять
 
 Меняешь файлы в ветке `main`, GitHub Pages обновится сам за пару минут.
-Если Telegram показывает старую версию, увеличь число в `?v=…` у `style.css`, `app.js` и `editor.js` в `index.html`.
+Если Telegram показывает старую версию, увеличь число в `?v=…` у `style.css`, `app.js`, `editor.js` и `cad.js` в `index.html`.
 
-Ссылка `https://mofv231008-commits.github.io/grava-app/#editor` сразу открывает вкладку «Редактор».
+Ссылка `https://mofv231008-commits.github.io/grava-app/#editor` сразу открывает вкладку «Редактор»,
+`https://mofv231008-commits.github.io/grava-app/?cad=<номер>` — конструктор детали.
 
 <details>
-<summary>Как пересобрать vendor/three-viewer.min.js (нужно только для обновления three.js)</summary>
+<summary>Как пересобрать vendor/three/three-viewer.min.js (нужно только для обновления three.js)</summary>
 
 ```sh
 npm i three esbuild
-npx esbuild vendor/three-viewer.entry.js --bundle --minify --format=esm \
-  --target=es2019 --legal-comments=none --outfile=vendor/three-viewer.min.js
+npx esbuild vendor/three/three-viewer.entry.js --bundle --minify --format=esm \
+  --target=es2019 --legal-comments=none --outfile=vendor/three/three-viewer.min.js
 ```
 </details>
