@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -48,6 +48,7 @@
       <h1 class="detail-title" id="detail-title"></h1>
       <div class="detail-meta" id="detail-meta"></div>
       <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
+      <button class="btn btn-secondary btn-wide detail-edit" id="detail-edit" type="button" hidden>✏️ Править в редакторе</button>
       <p class="note" id="detail-note"></p>
     </section>
 
@@ -92,6 +93,10 @@
       </div>
 
       <div id="ed-main" hidden>
+        <div class="ed-work" id="ed-work" hidden>
+          <span class="ed-work-title">Правка: <b id="ed-work-name"></b></span>
+          <button type="button" class="ed-work-close" id="ed-work-close" aria-label="Выйти из правки работы">✕</button>
+        </div>
         <div class="segmented" id="ed-switch">
           <button type="button" data-what="sketch">🧊 3D-эскиз</button>
           <button type="button" data-what="drawing">🔥 Чертёж</button>
@@ -113,6 +118,8 @@
             <button class="btn btn-primary" id="ed-retry" type="button" hidden>Попробовать ещё раз</button>
           </div>
         </div>
+
+        <p class="ed-work-note" id="ed-work-note" hidden></p>
 
         <div class="ed-tools">
           <button type="button" class="ed-tool" data-tool="brush"><b>✏️</b><span>Кисть</span></button>
@@ -196,7 +203,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
-  <script src="editor.js?v=4"></script>
+  <script src="app.js?v=5"></script>
+  <script src="editor.js?v=5"></script>
 </body>
 </html>

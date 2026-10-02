@@ -646,3 +646,35 @@ body.no-tabbar .toast { bottom: calc(var(--safe-bottom) + 16px); }
   text-align: center;
   font-weight: 600;
 }
+
+/* Правка работы из «Мои работы» */
+.detail-edit { margin-top: 10px; }
+.ed-work {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 4px 4px 14px;
+  border-radius: 12px;
+  background: var(--card);
+}
+.ed-work-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  color: var(--hint);
+}
+.ed-work-title b { color: var(--text); font-weight: 600; }
+.ed-work-close {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--hint);
+  font-size: 18px;
+}
+.ed-work-close:active { background: var(--bg); }
+.ed-work-note { margin: 10px 4px 0; font-size: 13px; color: var(--hint); }

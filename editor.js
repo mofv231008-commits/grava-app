@@ -11,8 +11,9 @@ const ED_SEND_TIMEOUT = 170000;
 
 const ed = {
   what: null,          // 'sketch' | 'drawing' — что выбрано в переключателе
-  loadedWhat: null,    // что сейчас лежит в canvas
-  version: null,       // версия загруженной картинки
+  order: null,         // работа из «Мои работы», если правим её (иначе — последний эскиз/чертёж)
+  loadedKey: null,     // что сейчас лежит в canvas: 'o:<id>' или 'd:<what>:<версия>'
+  loadedWhat: null,
   token: 0,
   ready: false,
   needsFit: false,
@@ -46,28 +47,47 @@ function edAvailable() {
   return ['sketch', 'drawing'].filter((k) => !!d[k]);
 }
 
+function edWhatForOrder(o) {
+  return o.kind === 'model' ? 'sketch' : 'drawing';
+}
+
 function renderEditor() {
   if (!state.me) {
     $('ed-empty').hidden = true;
     $('ed-main').hidden = true;
     return;
   }
+  const order = ed.order;
   const avail = edAvailable();
-  $('ed-empty').hidden = avail.length > 0;
-  $('ed-main').hidden = avail.length === 0;
-  if (!avail.length) return;
+  const hasSomething = !!order || avail.length > 0;
+  $('ed-empty').hidden = hasSomething;
+  $('ed-main').hidden = !hasSomething;
+  if (!hasSomething) return;
 
-  if (avail.indexOf(ed.what) === -1) ed.what = avail[0];
-  document.querySelectorAll('#ed-switch button').forEach((b) => {
-    b.hidden = avail.indexOf(b.dataset.what) === -1;
-    b.classList.toggle('is-active', b.dataset.what === ed.what);
-  });
-  $('ed-switch').classList.toggle('is-single', avail.length === 1);
+  // Правка работы: тип берём по работе, переключатель прячем.
+  $('ed-work').hidden = !order;
+  $('ed-switch').hidden = !!order;
+  $('ed-work-note').hidden = !order;
+  $('ed-hint').hidden = !!order;
+  if (order) {
+    ed.what = edWhatForOrder(order);
+    $('ed-work-name').textContent = order.title || 'Без названия';
+    $('ed-work-note').textContent = ed.what === 'sketch'
+      ? 'Правишь эскиз, из которого слеплена модель. После отправки выбери размер в чате — бот слепит новую модель (5 кр., подарок или оплаченная модель)'
+      : 'После отправки нажми в чате «🔥 Собрать DXF»';
+  } else {
+    if (avail.indexOf(ed.what) === -1) ed.what = avail[0];
+    document.querySelectorAll('#ed-switch button').forEach((b) => {
+      b.hidden = avail.indexOf(b.dataset.what) === -1;
+      b.classList.toggle('is-active', b.dataset.what === ed.what);
+    });
+    $('ed-switch').classList.toggle('is-single', avail.length === 1);
+    $('ed-hint').textContent = ed.what === 'sketch'
+      ? 'После отправки выбери в чате размер — и бот слепит модель'
+      : 'После отправки нажми в чате «🔥 Собрать DXF»';
+  }
 
   $('ed-price').textContent = Number(state.me.free_left) > 0 ? 'бесплатно' : '1 кр.';
-  $('ed-hint').textContent = ed.what === 'sketch'
-    ? 'После отправки выбери в чате размер — и бот слепит модель'
-    : 'После отправки нажми в чате «🔥 Собрать DXF»';
   edRenderTools();
   edUpdateButtons();
 
@@ -79,13 +99,53 @@ function renderEditor() {
   }
 }
 
+function edSourceKey() {
+  if (ed.order) return 'o:' + ed.order.id;
+  return 'd:' + ed.what + ':' + state.me.drafts[ed.what];
+}
+
 function edEnsureLoaded() {
-  const v = state.me.drafts[ed.what];
-  if (ed.loadedWhat === ed.what) {
-    if (ed.version === v) return;                 // уже загружено или грузится
-    if (ed.ready && ed.history.length) return;    // в боте новая версия, но тут есть правки — не трогаем
+  const key = edSourceKey();
+  if (ed.loadedKey === key) return; // уже загружено или грузится
+  // В боте появилась новая версия того же эскиза/чертежа, но тут есть правки — не трогаем.
+  const sameDraft = !ed.order && ed.loadedKey && ed.loadedKey.indexOf('d:' + ed.what + ':') === 0;
+  if (sameDraft && ed.ready && ed.history.length) return;
+  edLoad();
+}
+
+// Открыть работу из «Мои работы» в редакторе.
+function openOrderInEditor(o) {
+  haptic();
+  const go = () => {
+    if (state.detail) closeDetail();
+    if (!ed.order || ed.order.id !== o.id) {
+      ed.history = [];
+      $('ed-prompt').value = ''; // просьба к прошлой картинке сюда не относится
+    }
+    ed.order = o;
+    if (state.tab === 'editor') renderEditor();
+    else setTab('editor');
+  };
+  const sameWork = ed.order && ed.order.id === o.id;
+  if (ed.history.length && !sameWork) {
+    confirmBox('Несохранённые правки в редакторе пропадут. Открыть эту работу?', (ok) => { if (ok) go(); });
+  } else {
+    go();
   }
-  edLoad(ed.what, v);
+}
+
+// ✕ — назад к последнему эскизу/чертежу.
+function edCloseOrder() {
+  if (ed.busy) return;
+  haptic();
+  const go = () => {
+    ed.order = null;
+    ed.history = [];
+    $('ed-prompt').value = '';
+    renderEditor();
+  };
+  if (ed.history.length) confirmBox('Правки этой работы пропадут. Выйти?', (ok) => { if (ok) go(); });
+  else go();
 }
 
 /* ---------- Загрузка картинки ---------- */
@@ -98,15 +158,19 @@ function edStatus(mode, text) {
 }
 
 // Картинку грузим через fetch → blob, а не <img> с чужого домена: иначе canvas «испачкается».
-async function edLoad(what, v) {
+async function edLoad() {
   const token = ++ed.token;
+  const what = ed.what;
+  const params = ed.order
+    ? { a: 'draft', id: ed.order.id }                           // картинка конкретной работы
+    : { a: 'draft', what, v: state.me.drafts[what] };           // последний эскиз/чертёж
   ed.ready = false;
+  ed.loadedKey = edSourceKey();
   ed.loadedWhat = what;
-  ed.version = v;
   edStatus('loading');
   edUpdateButtons();
   try {
-    const res = await fetchWithTimeout(apiUrl({ a: 'draft', what, v }), 60000);
+    const res = await fetchWithTimeout(apiUrl(params), 60000);
     if (res.status === 401) throw new ApiError('auth');
     const type = res.headers.get('content-type') || '';
     if (!res.ok || type.indexOf('json') !== -1) {
@@ -121,7 +185,7 @@ async function edLoad(what, v) {
     edStatus('none');
   } catch (err) {
     if (token !== ed.token) return;
-    ed.version = null; // чтобы «Попробовать ещё раз» загрузило заново
+    ed.loadedKey = null; // чтобы «Попробовать ещё раз» загрузило заново
     if (err && err.code === 'auth') {
       edStatus('error', 'Сессия устарела — перезапусти приложение');
       sessionExpired();
@@ -653,6 +717,7 @@ async function edSend(kind) {
   }
 
   const params = { initData: tg.initData, a: kind, what: ed.what, image };
+  if (ed.order) params.title = ed.order.title || ''; // бот подпишет правку названием работы
   if (kind === 'ai') {
     params.prompt = prompt;
     if (marked) params.marked = 'true';
@@ -742,13 +807,14 @@ function bindEditor() {
     edRenderTools();
   });
 
+  $('ed-work-close').addEventListener('click', edCloseOrder);
   $('ed-undo').addEventListener('click', edUndo);
   $('ed-reset').addEventListener('click', edReset);
   $('ed-crop-apply').addEventListener('click', edCropApply);
   $('ed-crop-cancel').addEventListener('click', edCropCancel);
   $('ed-retry').addEventListener('click', () => {
     haptic();
-    if (state.me) edLoad(ed.what, state.me.drafts[ed.what]);
+    if (state.me) edLoad();
   });
 
   $('ed-prompt').addEventListener('input', edUpdateButtons);

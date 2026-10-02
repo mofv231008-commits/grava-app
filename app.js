@@ -316,6 +316,7 @@ function openDetail(o) {
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
   $('detail-3d').hidden = !isStl(o);
+  $('detail-edit').hidden = o.editable !== true;
   $('detail-note').textContent = !isModel(o)
     ? 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.'
     : isStl(o)
@@ -792,6 +793,9 @@ function bindEvents() {
   });
 
   $('detail-3d').addEventListener('click', openViewer);
+  $('detail-edit').addEventListener('click', () => {
+    if (state.detail) openOrderInEditor(state.detail);
+  });
   $('detail-preview').addEventListener('click', () => {
     if (state.detail && isStl(state.detail)) openViewer();
   });
