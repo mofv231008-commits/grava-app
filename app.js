@@ -354,6 +354,11 @@ function renderBalance() {
   $('gift').hidden = !free3d;
   $('price-model-note').hidden = !free3d;
 
+  // Поштучно оплаченные 3D-модели. Нет поля или 0 — строку не показываем.
+  const modelsLeft = Number(me.models_left) || 0;
+  $('bal-models').textContent = '🧊 Оплаченных 3D-моделей: ' + formatNumber(modelsLeft);
+  $('bal-models').hidden = modelsLeft <= 0;
+
   const chip = $('balance-chip');
   chip.textContent = 'Баланс: ' + formatNumber(balance) + ' кр.';
   chip.hidden = false;
@@ -386,6 +391,29 @@ function renderBalance() {
     card.appendChild(btn);
     box.appendChild(card);
   });
+
+  // Одна 3D-модель без пакета. Если one_model = null или поля нет — карточку не показываем.
+  const one = me.one_model;
+  if (one && one.id && Number(one.stars) > 0) {
+    const card = el('div', 'pack pack-single');
+    const info = el('div', 'pack-info');
+    info.appendChild(el('div', 'pack-title', '🧊 Одна 3D-модель\u00a0—\u00a0' + formatNumber(one.stars) + '\u00a0⭐'));
+    info.appendChild(el('div', 'pack-price', 'Без пакета. В пакете 10 кредитов модель выходит дешевле'));
+
+    const btn = el('button', 'btn btn-secondary', 'Купить');
+    btn.type = 'button';
+    btn.addEventListener('click', () => buy(one, btn));
+
+    card.appendChild(info);
+    card.appendChild(btn);
+    box.appendChild(card);
+  }
+}
+
+// Что меняется после оплаты: кредиты или поштучные 3D-модели.
+function paymentSnapshot() {
+  const me = state.me || {};
+  return (Number(me.balance) || 0) + '/' + (Number(me.models_left) || 0);
 }
 
 async function buy(pack, btn) {
@@ -397,7 +425,7 @@ async function buy(pack, btn) {
   try {
     const data = await api({ a: 'buy', pack: pack.id });
     if (!data.link) throw new ApiError('bad_response');
-    const before = Number(state.me.balance) || 0;
+    const before = paymentSnapshot();
     tg.openInvoice(data.link, (status) => {
       if (status === 'paid') {
         hapticNotify('success');
@@ -421,11 +449,10 @@ async function buy(pack, btn) {
 }
 
 // Через 2 секунды после оплаты перезапрашиваем баланс.
-// Если кредиты ещё не дошли — пробуем ещё пару раз.
+// Если покупка ещё не дошла — пробуем ещё пару раз.
 async function refreshAfterPayment(before, triesLeft) {
   await loadMe(false);
-  const now = state.me ? Number(state.me.balance) || 0 : before;
-  if (now === before && triesLeft > 0) {
+  if (paymentSnapshot() === before && triesLeft > 0) {
     setTimeout(() => refreshAfterPayment(before, triesLeft - 1), 3000);
   }
 }

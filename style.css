@@ -325,6 +325,20 @@ button {
 
 .row-note { font-size: 13px; color: var(--hint); }
 
+.hero-models {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pack-single {
+  background: transparent;
+  border: 1.5px solid var(--card);
+  border-radius: var(--radius);
+}
+.pack-single .pack-title { font-size: 16px; }
+.pack-single .pack-price { font-size: 13px; }
+
 .list .row {
   display: flex;
   justify-content: space-between;
