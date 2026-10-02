@@ -10,6 +10,7 @@
 | `index.html` | разметка всех экранов |
 | `style.css` | оформление (цвета берутся из темы Telegram) |
 | `app.js` | логика: запросы к API, вкладки, экран работы, оплата, 3D |
+| `editor.js` | вкладка «Редактор»: рисование, обводка для ИИ, обрезка, отправка правки |
 | `vendor/three-viewer.min.js` | three.js + STLLoader + OrbitControls одним файлом (лежит прямо здесь, без внешних CDN) |
 | `.nojekyll` | чтобы GitHub Pages отдавал файлы как есть |
 
@@ -26,7 +27,9 @@ API: `https://engrave.app.n8n.cloud/webhook/grava-app` (адрес в начал
 ## Как обновлять
 
 Меняешь файлы в ветке `main`, GitHub Pages обновится сам за пару минут.
-Если Telegram показывает старую версию, увеличь число в `?v=1` у `style.css` и `app.js` в `index.html`.
+Если Telegram показывает старую версию, увеличь число в `?v=…` у `style.css`, `app.js` и `editor.js` в `index.html`.
+
+Ссылка `https://mofv231008-commits.github.io/grava-app/#editor` сразу открывает вкладку «Редактор».
 
 <details>
 <summary>Как пересобрать vendor/three-viewer.min.js (нужно только для обновления three.js)</summary>

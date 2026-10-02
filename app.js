@@ -17,6 +17,7 @@ const state = {
   ordersKey: '',
   sending: false,
   buying: false,
+  editorOpen: false,
 };
 
 /* ---------- Помощники Телеги ---------- */
@@ -197,12 +198,37 @@ function renderView() {
   const inDetail = !!state.detail;
   $('view-works').hidden = inDetail || state.tab !== 'works';
   $('view-balance').hidden = inDetail || state.tab !== 'balance';
+  $('view-editor').hidden = inDetail || state.tab !== 'editor';
   $('view-detail').hidden = !inDetail;
   $('tabbar').hidden = !inApp || inDetail;
   document.body.classList.toggle('no-tabbar', !inApp || inDetail);
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('is-active', t.dataset.tab === state.tab);
   });
+
+  // В редакторе рисуют пальцем — свайп вниз не должен сворачивать приложение.
+  const editorOpen = inApp && !inDetail && state.tab === 'editor';
+  if (editorOpen !== state.editorOpen) {
+    state.editorOpen = editorOpen;
+    if (supports('7.7')) {
+      try {
+        if (editorOpen) tg.disableVerticalSwipes();
+        else tg.enableVerticalSwipes();
+      } catch (e) { /* ок */ }
+    }
+    if (editorOpen) renderEditor();
+  }
+}
+
+function setTab(tab) {
+  if (state.tab === tab) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  state.tab = tab;
+  renderView();
+  window.scrollTo(0, 0);
+  softRefresh();
 }
 
 function showFatal(err) {
@@ -470,6 +496,7 @@ async function loadMe(first) {
     state.lastLoad = Date.now();
     renderWorks();
     renderBalance();
+    renderEditor();
   } catch (err) {
     if (first) showFatal(err);
     else if (err.code === 'auth') sessionExpired();
@@ -749,22 +776,13 @@ function bindEvents() {
   document.querySelectorAll('.tab').forEach((t) => {
     t.addEventListener('click', () => {
       haptic();
-      if (state.tab === t.dataset.tab) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-      }
-      state.tab = t.dataset.tab;
-      renderView();
-      window.scrollTo(0, 0);
-      softRefresh();
+      setTab(t.dataset.tab);
     });
   });
 
   $('balance-chip').addEventListener('click', () => {
     haptic();
-    state.tab = 'balance';
-    renderView();
-    window.scrollTo(0, 0);
+    setTab('balance');
   });
 
   // Плашка «первая 3D-модель в подарок» возвращает в чат с ботом.
@@ -788,6 +806,8 @@ function bindEvents() {
     if ($('fatal-btn').dataset.action === 'close') tg.close();
     else loadMe(true);
   });
+
+  bindEditor();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(sendToChat);
@@ -814,8 +834,15 @@ function start() {
     } catch (e) { /* ок */ }
   }
 
+  // Ссылка с #editor (или startapp=editor) сразу открывает «Редактор».
+  const path = location.hash.replace(/^#/, '').split(/[?&]/)[0];
+  const startParam = tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+  if (path === 'editor' || startParam === 'editor') state.tab = 'editor';
+
   bindEvents();
   loadMe(true);
 }
 
-start();
+// editor.js подключается после этого файла — стартуем, когда загрузятся оба.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();

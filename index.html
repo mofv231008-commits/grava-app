@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -79,6 +79,80 @@
       <div id="packs" class="packs"></div>
       <p class="note">Оплата звёздами Telegram ⭐. Кредиты приходят сразу после оплаты.</p>
     </section>
+
+    <!-- Вкладка «Редактор» -->
+    <section id="view-editor" class="view" hidden>
+      <header class="page-head">
+        <h1>Редактор</h1>
+      </header>
+
+      <div id="ed-empty" class="empty" hidden>
+        <div class="empty-emoji">✏️</div>
+        <p>Пока нечего править — сначала сделай эскиз или чертёж в боте</p>
+      </div>
+
+      <div id="ed-main" hidden>
+        <div class="segmented" id="ed-switch">
+          <button type="button" data-what="sketch">🧊 3D-эскиз</button>
+          <button type="button" data-what="drawing">🔥 Чертёж</button>
+        </div>
+
+        <div class="ed-viewport" id="ed-viewport">
+          <div class="ed-stage" id="ed-stage">
+            <canvas id="ed-base"></canvas>
+            <canvas id="ed-mark"></canvas>
+            <div class="ed-crop" id="ed-crop" hidden></div>
+          </div>
+          <div class="ed-zoom">
+            <button type="button" id="ed-zoom-in" aria-label="Приблизить">🔍+</button>
+            <button type="button" id="ed-zoom-out" aria-label="Отдалить">🔍−</button>
+          </div>
+          <div class="ed-status" id="ed-status">
+            <div class="spinner" id="ed-status-spinner"></div>
+            <p id="ed-status-text">Загружаю картинку…</p>
+            <button class="btn btn-primary" id="ed-retry" type="button" hidden>Попробовать ещё раз</button>
+          </div>
+        </div>
+
+        <div class="ed-tools">
+          <button type="button" class="ed-tool" data-tool="brush"><b>✏️</b><span>Кисть</span></button>
+          <button type="button" class="ed-tool" data-tool="eraser"><b>🧽</b><span>Ластик</span></button>
+          <button type="button" class="ed-tool" data-tool="mark"><b>🎯</b><span>Обвести</span></button>
+          <button type="button" class="ed-tool" data-tool="crop"><b>✂️</b><span>Обрезка</span></button>
+          <button type="button" class="ed-tool" id="ed-undo"><b>↶</b><span>Отменить</span></button>
+          <button type="button" class="ed-tool" id="ed-reset"><b>🔄</b><span>Сбросить</span></button>
+        </div>
+
+        <div class="ed-options" id="ed-options">
+          <div class="ed-colors" id="ed-colors">
+            <button type="button" class="ed-color" data-color="#9a9a9a" style="background:#9a9a9a" aria-label="Серый"></button>
+            <button type="button" class="ed-color" data-color="#555555" style="background:#555555" aria-label="Тёмно-серый"></button>
+            <button type="button" class="ed-color" data-color="#ffffff" style="background:#ffffff" aria-label="Белый"></button>
+          </div>
+          <label class="ed-size">
+            <span class="ed-size-box"><span class="ed-size-dot" id="ed-size-dot"></span></span>
+            <input type="range" id="ed-size" min="4" max="60" step="1" value="14">
+            <span class="ed-size-val" id="ed-size-val">14</span>
+          </label>
+        </div>
+        <p class="ed-tip" id="ed-tip"></p>
+
+        <div class="ed-crop-actions" id="ed-crop-actions" hidden>
+          <button type="button" class="btn btn-secondary" id="ed-crop-cancel">Отмена</button>
+          <button type="button" class="btn btn-primary" id="ed-crop-apply">Применить</button>
+        </div>
+
+        <label class="ed-label" for="ed-prompt">Что поменять в обведённом месте?</label>
+        <textarea id="ed-prompt" class="ed-prompt" rows="3" maxlength="500"
+          placeholder="например: «сделай ступени шире», «убери надпись» или «добавь паз под часы»"></textarea>
+
+        <button type="button" class="btn btn-primary btn-wide ed-send" id="ed-ai" disabled>
+          🪄 Поправить нейронкой <span class="ed-price" id="ed-price">бесплатно</span>
+        </button>
+        <button type="button" class="btn btn-secondary btn-wide ed-send" id="ed-save">✅ Отправить в чат как есть</button>
+        <p class="note" id="ed-hint"></p>
+      </div>
+    </section>
   </main>
 
   <!-- Нижняя панель вкладок -->
@@ -90,6 +164,10 @@
     <button class="tab" data-tab="balance" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M6.5 4H18a1 1 0 0 1 1 1v2h.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-13A2.5 2.5 0 0 1 4 17.5v-11A2.5 2.5 0 0 1 6.5 4zm0 2a.5.5 0 0 0 0 1H17V6zm10 5.5a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z"/></svg>
       <span>Баланс</span>
+    </button>
+    <button class="tab" data-tab="editor" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.2 4.3a2.2 2.2 0 0 1 3.1 0l1.4 1.4a2.2 2.2 0 0 1 0 3.1L9.4 19.1 4 20l.9-5.4zM13.8 7.1l3.1 3.1 1.4-1.4-3.1-3.1z"/></svg>
+      <span>Редактор</span>
     </button>
   </nav>
 
@@ -110,6 +188,15 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js?v=3"></script>
+  <!-- Затемнение, пока отправляется правка -->
+  <div id="busy" class="busy" hidden>
+    <div class="busy-card">
+      <div class="spinner"></div>
+      <p id="busy-text">Отправляю…</p>
+    </div>
+  </div>
+
+  <script src="app.js?v=4"></script>
+  <script src="editor.js?v=4"></script>
 </body>
 </html>
