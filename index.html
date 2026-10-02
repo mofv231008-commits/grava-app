@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <title>Грава</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+  <!-- Открыли не из Телеги -->
+  <section id="outside" class="state" hidden>
+    <div class="state-emoji">🔥</div>
+    <h1 class="state-title">Грава</h1>
+    <p class="state-text">Открой приложение из бота <b>@grava_ai_bot</b></p>
+    <a class="btn btn-primary" href="https://t.me/grava_ai_bot">Открыть бота</a>
+  </section>
+
+  <!-- Общие состояния: загрузка, ошибка, протухшая сессия -->
+  <section id="boot" class="state" hidden>
+    <div class="spinner"></div>
+  </section>
+
+  <section id="fatal" class="state" hidden>
+    <div class="state-emoji" id="fatal-emoji">😕</div>
+    <p class="state-text" id="fatal-text">Не получилось загрузить данные</p>
+    <button class="btn btn-primary" id="fatal-btn" type="button">Попробовать ещё раз</button>
+  </section>
+
+  <main id="app" hidden>
+    <!-- Вкладка «Мои работы» -->
+    <section id="view-works" class="view">
+      <header class="page-head">
+        <h1>Мои работы</h1>
+        <button class="chip" id="balance-chip" type="button" hidden></button>
+      </header>
+      <div id="works-grid" class="grid"></div>
+      <div id="works-empty" class="empty" hidden>
+        <div class="empty-emoji">✏️</div>
+        <p>Пока пусто — опиши идею боту, и работа появится здесь</p>
+      </div>
+    </section>
+
+    <!-- Экран одной работы -->
+    <section id="view-detail" class="view" hidden>
+      <div class="detail-preview" id="detail-preview"></div>
+      <h1 class="detail-title" id="detail-title"></h1>
+      <div class="detail-meta" id="detail-meta"></div>
+      <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
+      <p class="note" id="detail-note"></p>
+    </section>
+
+    <!-- Вкладка «Баланс» -->
+    <section id="view-balance" class="view" hidden>
+      <header class="page-head">
+        <h1>Баланс</h1>
+      </header>
+
+      <div class="card hero">
+        <div class="hero-label">У тебя на счету</div>
+        <div class="hero-value"><span id="bal-value">0</span> <span class="hero-unit" id="bal-unit">кредитов</span></div>
+        <div class="hero-free" id="bal-free"></div>
+      </div>
+
+      <h2 class="section-title">Цены</h2>
+      <div class="card list">
+        <div class="row"><span>🔥 Чертёж / эскиз</span><b id="price-image">1 кр.</b></div>
+        <div class="row"><span>🧊 3D-модель</span><b id="price-model">4 кр.</b></div>
+      </div>
+
+      <h2 class="section-title">Пополнить</h2>
+      <div id="packs" class="packs"></div>
+      <p class="note">Оплата звёздами Telegram ⭐. Кредиты приходят сразу после оплаты.</p>
+    </section>
+  </main>
+
+  <!-- Нижняя панель вкладок -->
+  <nav id="tabbar" class="tabbar" hidden>
+    <button class="tab is-active" data-tab="works" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>
+      <span>Мои работы</span>
+    </button>
+    <button class="tab" data-tab="balance" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M6.5 4H18a1 1 0 0 1 1 1v2h.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-13A2.5 2.5 0 0 1 4 17.5v-11A2.5 2.5 0 0 1 6.5 4zm0 2a.5.5 0 0 0 0 1H17V6zm10 5.5a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z"/></svg>
+      <span>Баланс</span>
+    </button>
+  </nav>
+
+  <!-- 3D-просмотр -->
+  <div id="viewer" class="viewer" hidden>
+    <div id="viewer-stage" class="viewer-stage"></div>
+    <div id="viewer-loading" class="viewer-overlay">
+      <div class="spinner"></div>
+      <div class="viewer-progress" id="viewer-progress">Загружаю модель…</div>
+    </div>
+    <div id="viewer-error" class="viewer-overlay" hidden>
+      <div class="state-emoji">😕</div>
+      <p class="state-text" id="viewer-error-text">Не получилось открыть модель</p>
+      <button class="btn btn-primary" id="viewer-retry" type="button">Попробовать ещё раз</button>
+    </div>
+    <div id="viewer-hint" class="viewer-hint" hidden>Крути пальцем · щипок — приблизить</div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js?v=1"></script>
+</body>
+</html>
