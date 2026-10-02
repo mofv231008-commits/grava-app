@@ -349,6 +349,11 @@ function renderBalance() {
   $('price-image').textContent = (prices.image != null ? prices.image : 1) + ' кр.';
   $('price-model').textContent = (prices.model != null ? prices.model : 4) + ' кр.';
 
+  // Первая 3D-модель в подарок. В старых ответах API поля free_3d нет — тогда ничего не показываем.
+  const free3d = me.free_3d === true;
+  $('gift').hidden = !free3d;
+  $('price-model-note').hidden = !free3d;
+
   const chip = $('balance-chip');
   chip.textContent = 'Баланс: ' + formatNumber(balance) + ' кр.';
   chip.hidden = false;
@@ -733,6 +738,12 @@ function bindEvents() {
     state.tab = 'balance';
     renderView();
     window.scrollTo(0, 0);
+  });
+
+  // Плашка «первая 3D-модель в подарок» возвращает в чат с ботом.
+  $('gift').addEventListener('click', () => {
+    haptic('light');
+    tg.close();
   });
 
   $('detail-3d').addEventListener('click', openViewer);

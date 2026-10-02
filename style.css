@@ -308,6 +308,23 @@ button {
   font-size: 14px;
 }
 
+.gift {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px 16px 14px 20px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: inset 4px 0 0 var(--accent);
+  text-align: left;
+  transition: transform .12s ease, opacity .12s ease;
+}
+.gift:active { transform: scale(.98); opacity: .85; }
+.gift-title { display: block; font-size: 16px; font-weight: 700; }
+.gift-text { display: block; margin-top: 3px; font-size: 13px; color: var(--hint); }
+
+.row-note { font-size: 13px; color: var(--hint); }
+
 .list .row {
   display: flex;
   justify-content: space-between;

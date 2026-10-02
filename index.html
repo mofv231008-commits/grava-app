@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -63,10 +63,15 @@
         <div class="hero-free" id="bal-free"></div>
       </div>
 
+      <button class="gift" id="gift" type="button" hidden>
+        <span class="gift-title">🎁 Первая 3D-модель — в подарок!</span>
+        <span class="gift-text">Опиши идею боту — кредиты не спишутся</span>
+      </button>
+
       <h2 class="section-title">Цены</h2>
       <div class="card list">
         <div class="row"><span>🔥 Чертёж / эскиз</span><b id="price-image">1 кр.</b></div>
-        <div class="row"><span>🧊 3D-модель</span><b id="price-model">4 кр.</b></div>
+        <div class="row"><span>🧊 3D-модель<span class="row-note" id="price-model-note" hidden> (первая — бесплатно)</span></span><b id="price-model">4 кр.</b></div>
       </div>
 
       <h2 class="section-title">Пополнить</h2>
@@ -104,6 +109,6 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js?v=1"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>
