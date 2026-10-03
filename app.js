@@ -2,7 +2,7 @@
 'use strict';
 
 const API = 'https://engrave.app.n8n.cloud/webhook/grava-app';
-const THREE_URL = './vendor/three/three-viewer.min.js?v=2';
+const THREE_URL = './vendor/three/three-viewer.min.js?v=3';
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (id) => document.getElementById(id);
@@ -21,6 +21,8 @@ const state = {
   noSwipes: false,
   cad: null,        // открытый конструктор
   cadBusy: false,
+  flexi: null,      // открытый сборщик шарниров
+  flexiBusy: false,
 };
 
 /* ---------- Помощники Телеги ---------- */
@@ -199,14 +201,16 @@ function showScreen(name) {
 
 function renderView() {
   const inApp = !$('app').hidden;
-  const inCad = !!state.cad;
-  const inDetail = !inCad && !!state.detail;
-  const overlay = inCad || inDetail; // экраны поверх вкладок
+  const inFlexi = !!state.flexi;
+  const inCad = !inFlexi && !!state.cad;
+  const inDetail = !inFlexi && !inCad && !!state.detail;
+  const overlay = inFlexi || inCad || inDetail; // экраны поверх вкладок
   $('view-works').hidden = overlay || state.tab !== 'works';
   $('view-balance').hidden = overlay || state.tab !== 'balance';
   $('view-editor').hidden = overlay || state.tab !== 'editor';
   $('view-detail').hidden = !inDetail;
   $('view-cad').hidden = !inCad;
+  $('view-flexi').hidden = !inFlexi;
   $('tabbar').hidden = !inApp || overlay;
   document.body.classList.toggle('no-tabbar', !inApp || overlay);
   document.querySelectorAll('.tab').forEach((t) => {
@@ -220,7 +224,7 @@ function renderView() {
   }
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
-  const noSwipes = editorOpen || (inApp && inCad);
+  const noSwipes = editorOpen || (inApp && (inCad || inFlexi));
   if (noSwipes !== state.noSwipes) {
     state.noSwipes = noSwipes;
     if (supports('7.7')) {
@@ -281,6 +285,7 @@ function workCard(o) {
   card.tabIndex = 0;
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
+  if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', '🦴 на шарнирах'));
   card.appendChild(thumb);
 
   const body = el('div', 'work-body');
@@ -295,6 +300,15 @@ function workCard(o) {
   }
   body.appendChild(meta);
 
+  if (o.flexi === true) {
+    const btn = el('button', 'work-cad-btn', '🦴 Собрать шарниры');
+    btn.type = 'button';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFlexi(o.id);
+    });
+    body.appendChild(btn);
+  }
   if (isCadDraft || o.cad === true) {
     const btn = el('button', 'work-cad-btn', isCadDraft ? '📐 Открыть в конструкторе' : '📐 В конструктор');
     btn.type = 'button';
@@ -357,8 +371,10 @@ function openDetail(o) {
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
   $('detail-3d').hidden = !can3d;
-  $('detail-edit').hidden = o.editable !== true || o.cad === true; // у деталей из конструктора — свой редактор
+  // у деталей из конструктора и собранных на шарнирах редактор картинок не нужен
+  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true;
   $('detail-cad').hidden = o.cad !== true;
+  $('detail-flexi').hidden = o.flexi !== true;
   $('detail-note').textContent = !isModel(o)
     ? 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.'
     : isStl(o)
@@ -386,13 +402,15 @@ function closeDetail() {
 function goBack() {
   haptic();
   if (state.viewer) closeViewer();
+  else if (state.flexi) closeFlexi();
   else if (state.cad) closeCad();
   else if (state.detail) closeDetail();
 }
 
 // Одна кнопка Телеги на два экрана: на экране работы — «Прислать в чат», в конструкторе — файл детали.
 function onMainButton() {
-  if (state.cad) cadExport();
+  if (state.flexi) flexiExport();
+  else if (state.cad) cadExport();
   else sendToChat();
 }
 
@@ -857,6 +875,9 @@ function bindEvents() {
   $('detail-cad').addEventListener('click', () => {
     if (state.detail) openCad(state.detail.id);
   });
+  $('detail-flexi').addEventListener('click', () => {
+    if (state.detail) openFlexi(state.detail.id);
+  });
   $('detail-edit').addEventListener('click', () => {
     if (state.detail) openOrderInEditor(state.detail);
   });
@@ -877,6 +898,7 @@ function bindEvents() {
 
   bindEditor();
   bindCad();
+  bindFlexi();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(onMainButton);
@@ -913,7 +935,9 @@ function start() {
 
   // Бот открывает конструктор кнопкой «📐 Открыть конструктор» со ссылкой ?cad=<id>.
   const cadId = cadIdFromUrl();
-  if (cadId) openCad(cadId);
+  const flexiId = flexiIdFromUrl();
+  if (flexiId) openFlexi(flexiId); // бот: кнопка «🦴 Собрать шарниры» → ?flexi=<id>
+  else if (cadId) openCad(cadId);
 }
 
 // editor.js подключается после этого файла — стартуем, когда загрузятся оба.

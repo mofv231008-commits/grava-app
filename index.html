@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -50,6 +50,7 @@
       <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
       <button class="btn btn-secondary btn-wide detail-edit" id="detail-edit" type="button" hidden>✏️ Править в редакторе</button>
       <button class="btn btn-secondary btn-wide detail-edit" id="detail-cad" type="button" hidden>📐 В конструктор</button>
+      <button class="btn btn-secondary btn-wide detail-edit" id="detail-flexi" type="button" hidden>🦴 Собрать шарниры</button>
       <p class="note" id="detail-note"></p>
     </section>
 
@@ -84,6 +85,80 @@
       <h2 class="section-title">Пополнить</h2>
       <div id="packs" class="packs"></div>
       <p class="note">Оплата звёздами Telegram ⭐. Кредиты приходят сразу после оплаты.</p>
+    </section>
+
+    <!-- Сборщик шарниров -->
+    <section id="view-flexi" class="view" hidden>
+      <div id="flexi-missing" class="empty" hidden>
+        <div class="empty-emoji">🦴</div>
+        <p id="flexi-missing-text">Модель не найдена</p>
+        <button class="btn btn-primary cad-missing-btn" id="flexi-missing-btn" type="button">К моим работам</button>
+      </div>
+
+      <div id="flexi-main">
+        <h1 class="detail-title cad-title" id="flexi-title">Загружаю модель…</h1>
+        <div class="detail-meta"><span>🦴 Подвижная модель</span></div>
+        <div class="flexi-warn" id="flexi-warn-pose" hidden>Эта модель не в позе лёжа — суставы могут не напечататься. Лучше сделай новую «🦎 Подвижная» в боте</div>
+
+        <div class="flexi-status" id="flexi-status">
+          <div class="spinner"></div>
+          <p id="flexi-status-text">Загружаю модель…</p>
+        </div>
+
+        <div id="flexi-editor" hidden>
+          <div class="flexi-top" id="flexi-top">
+            <canvas id="flexi-canvas"></canvas>
+          </div>
+          <p class="flexi-count" id="flexi-count"></p>
+          <div class="flexi-tools">
+            <button type="button" class="btn btn-secondary" id="flexi-remove" disabled>🗑 Убрать</button>
+            <button type="button" class="btn btn-secondary" id="flexi-add">＋ Разрез</button>
+            <button type="button" class="btn btn-secondary" id="flexi-auto">↺ Авто</button>
+          </div>
+          <p class="ed-tip" id="flexi-tip"></p>
+
+          <details class="flexi-settings">
+            <summary>Настройки</summary>
+            <div class="card cad-list">
+              <div class="cad-param">
+                <div class="cad-param-head"><label class="cad-param-label" for="flexi-length">Длина фигурки</label><b class="flexi-val" id="flexi-length-val">150 мм</b></div>
+                <input class="cad-slider" type="range" id="flexi-length" min="80" max="250" step="1" value="150">
+                <p class="flexi-small" id="flexi-small" hidden>Мелко — суставы будут слабые</p>
+              </div>
+              <div class="cad-param">
+                <div class="cad-param-head"><span class="cad-param-label">Зазор</span>
+                  <div class="segmented flexi-gap" id="flexi-gap">
+                    <button type="button" data-gap="0.35">0.35</button>
+                    <button type="button" data-gap="0.45" class="is-active">0.45</button>
+                    <button type="button" data-gap="0.55">0.55</button>
+                  </div>
+                </div>
+              </div>
+              <div class="cad-param">
+                <div class="cad-param-head"><label class="cad-param-label" for="flexi-alpha">Свободный поворот</label><b class="flexi-val" id="flexi-alpha-val">25°</b></div>
+                <input class="cad-slider" type="range" id="flexi-alpha" min="15" max="35" step="1" value="25">
+              </div>
+              <div class="cad-param">
+                <div class="cad-param-head"><label class="cad-param-label" for="flexi-cut">Срезать низ</label><b class="flexi-val" id="flexi-cut-val">1 мм</b></div>
+                <input class="cad-slider" type="range" id="flexi-cut" min="0" max="3" step="0.1" value="1">
+              </div>
+            </div>
+          </details>
+
+          <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build">🔧 Собрать</button>
+
+          <div id="flexi-result" hidden>
+            <h2 class="section-title">Что получилось</h2>
+            <p class="flexi-stale" id="flexi-result-stale" hidden>Разрезы или настройки поменялись — нажми «🔧 Собрать» ещё раз</p>
+            <div class="cad-preview flexi-3d" id="flexi-3d"></div>
+            <p class="cad-dims" id="flexi-parts"></p>
+            <button type="button" class="btn btn-secondary btn-wide" id="flexi-wiggle">🦎 Пошевелить</button>
+            <div class="flexi-notes" id="flexi-notes"></div>
+          </div>
+
+          <p class="note">Печатай без поддержек, масштаб 100%. После печати пошевели каждый сустав. Прилипло — поставь зазор 0.55 и пересобери.</p>
+        </div>
+      </div>
     </section>
 
     <!-- Конструктор деталей по размерам -->
@@ -248,8 +323,9 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
   <script src="editor.js?v=6"></script>
   <script src="cad.js?v=1"></script>
+  <script src="flexi.js?v=1"></script>
 </body>
 </html>

@@ -13,6 +13,10 @@
 | `editor.js` | вкладка «Редактор»: рисование, обводка для ИИ, обрезка, отправка правки |
 | `cad.js` | конструктор деталей по размерам: параметры, превью, отправка файла, починка |
 | `cad-worker.js` | фоновый поток конструктора: считает деталь движком OpenSCAD |
+| `flexi.js` | экран «🦴 Шарниры»: вид сверху с разрезами, настройки, превью, отправка |
+| `flexi-worker.js`, `flexi-core.js` | сборщик шарниров: автопоиск разрезов и суставы «кулак в гнезде» (manifold-3d) |
+| `tests/flexi-lizard.mjs` | проверка сборщика на синтетической ящерице: `node tests/flexi-lizard.mjs` |
+| `vendor/manifold/` | движок manifold-3d (WebAssembly, Apache-2.0) |
 | `vendor/openscad/` | движок OpenSCAD (WebAssembly, GPL-2.0), см. `vendor/openscad/README.md` |
 | `vendor/three/three-viewer.min.js` | three.js + STLLoader + OrbitControls одним файлом (лежит прямо здесь, без внешних CDN) |
 | `.nojekyll` | чтобы GitHub Pages отдавал файлы как есть |
@@ -30,10 +34,11 @@ API: `https://engrave.app.n8n.cloud/webhook/grava-app` (адрес в начал
 ## Как обновлять
 
 Меняешь файлы в ветке `main`, GitHub Pages обновится сам за пару минут.
-Если Telegram показывает старую версию, увеличь число в `?v=…` у `style.css`, `app.js`, `editor.js` и `cad.js` в `index.html`.
+Если Telegram показывает старую версию, увеличь число в `?v=…` у `style.css`, `app.js`, `editor.js`, `cad.js` и `flexi.js` в `index.html`.
 
 Ссылка `https://mofv231008-commits.github.io/grava-app/#editor` сразу открывает вкладку «Редактор»,
-`https://mofv231008-commits.github.io/grava-app/?cad=<номер>` — конструктор детали.
+`https://mofv231008-commits.github.io/grava-app/?cad=<номер>` — конструктор детали,
+`https://mofv231008-commits.github.io/grava-app/?flexi=<номер>` — сборщик шарниров.
 
 <details>
 <summary>Как пересобрать vendor/three/three-viewer.min.js (нужно только для обновления three.js)</summary>

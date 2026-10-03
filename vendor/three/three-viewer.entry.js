@@ -2,7 +2,8 @@
 // npx esbuild three-viewer.entry.js --bundle --minify --format=esm --target=es2019 --legal-comments=none --outfile=three-viewer.min.js
 export {
   WebGLRenderer, Scene, PerspectiveCamera, Mesh, MeshStandardMaterial,
-  HemisphereLight, DirectionalLight, GridHelper, Box3, Vector3
+  HemisphereLight, DirectionalLight, GridHelper, Box3, Vector3,
+  BufferGeometry, BufferAttribute, Group
 } from 'three';
 export { STLLoader } from 'three/addons/loaders/STLLoader.js';
 export { OrbitControls } from 'three/addons/controls/OrbitControls.js';
