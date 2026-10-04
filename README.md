@@ -14,8 +14,8 @@
 | `cad.js` | конструктор деталей по размерам: параметры, превью, отправка файла, починка |
 | `cad-worker.js` | фоновый поток конструктора: считает деталь движком OpenSCAD |
 | `flexi.js` | экран «🦴 Шарниры»: вид сверху с разрезами, настройки, превью, отправка |
-| `flexi-worker.js`, `flexi-core.js` | сборщик шарниров: автопоиск разрезов и суставы «кулак в гнезде» (manifold-3d) |
-| `tests/flexi-lizard.mjs` | проверка сборщика на синтетической ящерице: `node tests/flexi-lizard.mjs` |
+| `flexi-worker.js`, `flexi-core.js` | сборщик шарниров: автопоиск суставов, сустав «кулак в кольце» (отдельная деталь), звенья, раскладка на стол (manifold-3d) |
+| `tests/flexi.test.mjs` | проверка сборщика: ящерица, скелет, осьминог, змея в режимах «Сборная» и «Целиком» — `node tests/flexi.test.mjs`, STL в `tests/out/` |
 | `vendor/manifold/` | движок manifold-3d (WebAssembly, Apache-2.0) |
 | `vendor/openscad/` | движок OpenSCAD (WebAssembly, GPL-2.0), см. `vendor/openscad/README.md` |
 | `vendor/three/three-viewer.min.js` | three.js + STLLoader + OrbitControls одним файлом (лежит прямо здесь, без внешних CDN) |

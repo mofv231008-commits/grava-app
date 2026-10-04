@@ -1,12 +1,36 @@
-/* Грава — экран «🦴 Шарниры»: подвижная фигурка (print-in-place).
-   Считает всё фоновый поток flexi-worker.js; тут — вид сверху, разрезы, настройки, превью, отправка.
-   Использует помощники из app.js и cadPost из cad.js. */
+/* Грава — экран «🦴 Шарниры»: подвижная фигурка.
+   Режимы: 🧩 Сборная (детали печатаются раздельно и защёлкиваются) и 🖨 Целиком (print-in-place).
+   Считает фоновый поток flexi-worker.js; размеры суставов и порядок — из flexi-core.js (тот же код).
+   Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=1';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=2';
+const FLEXI_CORE_URL = './flexi-core.js?v=2';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 const FLEXI_COLORS = [0xb8b8b8, 0x6fa8dc, 0xf6b26b, 0x93c47d, 0xe06666, 0x8e7cc3, 0xffd966, 0x76a5af, 0xc27ba0, 0xa2c4c9, 0xd5a6bd, 0xb6d7a8, 0xf9cb9c, 0x9fc5e8, 0xea9999];
 const FLEXI_RED = '#e53935';
+const FLEXI_HINT = {
+  pip: 'Печатай без поддержек, масштаб 100%, слой 0.2. После печати разработай каждый сустав. Прилипло — зазор 0.55 и пересобери. Болтается — 0.35.',
+  kit: 'Печатай детали как разложены, без поддержек, слой 0.2. Сборка: вдави кулак лапы в кольцо сбоку до щелчка. Туго — натяг 0.2, болтается — 0.5.',
+};
+const FLEXI_MODE_TIP = {
+  kit: 'Детали печатаются отдельно и защёлкиваются — ничего не слипнется, сустав держит позу.',
+  pip: 'Печатается сразу подвижной, без сборки.',
+};
+
+let flexiCore = null;
+function flexiLoadCore() {
+  if (!flexiCore) flexiCore = import(FLEXI_CORE_URL).catch((e) => { flexiCore = null; throw e; });
+  return flexiCore;
+}
+
+function flexiStore(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem(key);
+    localStorage.setItem(key, value);
+  } catch (e) { /* приватный режим — не страшно */ }
+  return null;
+}
 
 /* ---------- Открыть / закрыть ---------- */
 
@@ -23,8 +47,10 @@ function openFlexi(id) {
   }
   if (state.flexi) flexiTeardown();
 
+  const plate = Number(flexiStore('grava.flexi.plate')) || 220;
   const f = state.flexi = {
     id,
+    core: null,
     data: null,
     worker: null,
     seq: 0,
@@ -32,10 +58,12 @@ function openFlexi(id) {
     origLen: 0,
     length: 150,
     cut: 1,
-    g: 0.45,
-    alpha: 25,
+    mode: 'kit',
+    pip: { g: 0.45, alpha: 20, links: true },
+    kit: { g: 0.2, snap: 0.35, links: false, plate: [180, 220, 250, 300].indexOf(plate) >= 0 ? plate : 220 },
+    k: 1.2,
+    alphaSeg: 15,
     prep: null,
-    autoCuts: [],
     cuts: [],
     edited: false,
     nextId: 1,
@@ -44,6 +72,8 @@ function openFlexi(id) {
     built: null,
     stale: true,
     prepTimer: 0,
+    autoSeq: 0,
+    view: 'assembled',
   };
 
   $('flexi-missing').hidden = true;
@@ -54,13 +84,17 @@ function openFlexi(id) {
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
   $('flexi-result').hidden = true;
-  flexiResetSettingsUi();
+  flexiRenderSettings();
   renderView();
   window.scrollTo(0, 0);
   tg.BackButton.show();
   flexiUpdateMainButton();
 
-  api({ a: 'flexi', id })
+  flexiLoadCore()
+    .then((core) => {
+      f.core = core;
+      return api({ a: 'flexi', id });
+    })
     .then((data) => {
       if (state.flexi !== f) return;
       f.data = data;
@@ -70,16 +104,17 @@ function openFlexi(id) {
     })
     .catch((err) => {
       if (state.flexi !== f) return;
-      if (err && err.code === 'auth') {
+      const code = err && err.code;
+      if (code === 'auth') {
         flexiShowMissing('Сессия устарела — перезапусти приложение', 'close');
         sessionExpired();
-      } else if (err && err.code === 'network') {
+      } else if (code === 'network') {
         flexiShowMissing('Нет связи с сервером. Проверь интернет и попробуй ещё раз', 'retry');
-      } else if (err && err.code === 'holes') {
+      } else if (code === 'holes') {
         flexiShowMissing('Модель с дырками — шарниры не собрать. Попроси бота слепить заново', 'back');
-      } else if (err && err.code === 'worker') {
+      } else if (code === 'worker' || !f.core) {
         flexiShowMissing('Сборщик не запустился на этом телефоне. Обнови Telegram и попробуй ещё раз', 'back');
-      } else if (err && err.code === 'bad_stl') {
+      } else if (code === 'bad_stl') {
         flexiShowMissing('Файл модели не читается. Попроси бота слепить заново', 'back');
       } else {
         flexiShowMissing('Модель не найдена', 'back');
@@ -128,6 +163,33 @@ class FlexiUiError extends Error {
   }
 }
 
+/* ---------- Настройки сборки ---------- */
+
+// Опции для flexi-core: размеры суставов, автопоиск, раскладка.
+function flexiOpts(f) {
+  if (f.mode === 'kit') {
+    return { mode: 'kit', g: f.kit.g, snap: f.kit.snap, plate: f.kit.plate, links: f.kit.links, k: f.k, alphaSeg: f.alphaSeg };
+  }
+  return { mode: 'pip', g: f.pip.g, alpha: f.pip.alpha, links: f.pip.links, k: f.k, alphaSeg: f.alphaSeg };
+}
+
+function flexiDims(f, c) {
+  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]), c.link);
+}
+
+// Верх модели в радиусе 3 мм — по картинке высот (точное значение считает поток при сборке).
+function flexiZtop(f, x, y) {
+  const g = f.prep.grid, h = f.prep.heights;
+  const cx = (x - g.x0) / g.step - 0.5, cy = (y - g.y0) / g.step - 0.5, rp = 3 / g.step;
+  let best = 0;
+  for (let py = Math.max(0, Math.floor(cy - rp)); py <= Math.min(g.H - 1, Math.ceil(cy + rp)); py++) {
+    for (let px = Math.max(0, Math.floor(cx - rp)); px <= Math.min(g.W - 1, Math.ceil(cx + rp)); px++) {
+      if ((px - cx) ** 2 + (py - cy) ** 2 <= rp * rp && h[py * g.W + px] > best) best = h[py * g.W + px];
+    }
+  }
+  return best ? ((best - 40) / 215) * f.prep.zMax : 0;
+}
+
 /* ---------- Фоновый поток ---------- */
 
 function flexiWorker(f) {
@@ -137,7 +199,9 @@ function flexiWorker(f) {
   w.onmessage = (e) => {
     const msg = e.data || {};
     if (msg.type === 'progress') {
-      $('busy-text').textContent = 'Сустав ' + msg.k + ' из ' + msg.n + '…';
+      $('busy-text').textContent = msg.phase === 'check'
+        ? 'Проверяю суставы… ' + msg.k + ' из ' + msg.n
+        : (msg.link ? 'Звено ' : 'Сустав ') + msg.k + ' из ' + msg.n + '…';
       return;
     }
     const p = f.pending[msg.id];
@@ -173,8 +237,7 @@ function flexiCall(f, msg, transfer) {
 /* ---------- Загрузка STL ---------- */
 
 async function flexiDownload(f) {
-  let res;
-  try { res = await fetchWithTimeout(apiUrl({ a: 'file', id: f.id, what: 'file' }), 180000); } catch (e) { throw e; }
+  const res = await fetchWithTimeout(apiUrl({ a: 'file', id: f.id, what: 'file' }), 180000);
   if (res.status === 401) throw new ApiError('auth');
   const type = res.headers.get('content-type') || '';
   if (!res.ok || type.indexOf('json') !== -1) {
@@ -211,11 +274,11 @@ async function flexiDownload(f) {
   if (state.flexi !== f) return;
   f.origLen = r.length;
   f.length = Math.round(Math.min(250, Math.max(80, Math.max(150, r.length))));
-  flexiResetSettingsUi();
+  flexiRenderSettings();
   await flexiPrepare(f, true);
 }
 
-/* ---------- Подготовка: масштаб, срез, автопоиск разрезов ---------- */
+/* ---------- Подготовка и автопоиск ---------- */
 
 async function flexiPrepare(f, first) {
   $('flexi-status').hidden = false;
@@ -229,18 +292,18 @@ async function flexiPrepare(f, first) {
     $('flexi-status-text').textContent = 'Не получилось подготовить модель: ' + ((err && err.message) || err);
     return;
   }
-  if (state.flexi !== f) return;
-  // ответ на старый запрос (ползунок уже сдвинули ещё раз) — ждём следующий
-  if (r.length !== f.length) return;
+  if (state.flexi !== f || r.length !== f.length) return; // уже двигают ползунок дальше
+  const sk = r.skeleton;
+  r.skel = [];
+  for (let k = 0; k < sk.length / 5; k++) r.skel.push({ x: sk[k * 5], y: sk[k * 5 + 1], dt: sk[k * 5 + 2], parent: sk[k * 5 + 3], dist: sk[k * 5 + 4] });
   f.prep = r;
-  f.autoCuts = r.cuts.map((c) => ({ P: c.P, n: c.n, w: c.w }));
-  if (!f.edited) {
-    flexiSetAuto(f);
-  } else if (oldLen && r.length !== oldLen) {
+  if (f.edited && oldLen && r.length !== oldLen) {
     const k = r.length / oldLen; // модель отцентрована в (0,0) — разрезы масштабируются вместе с ней
     f.cuts.forEach((c) => { c.P = [c.P[0] * k, c.P[1] * k]; c.w *= k; });
   }
+  if (!f.edited) await flexiAuto(f, true);
   f.stale = true;
+  if (state.flexi !== f) return;
   $('flexi-status').hidden = true;
   $('flexi-editor').hidden = false;
   flexiLayoutCanvas();
@@ -248,34 +311,51 @@ async function flexiPrepare(f, first) {
   flexiUpdateMainButton();
 }
 
-function flexiSetAuto(f) {
-  f.cuts = f.autoCuts.map((c) => ({ id: f.nextId++, P: c.P.slice(), n: c.n.slice(), w: c.w }));
+async function flexiAuto(f, silent) {
+  if (!f.prep) return;
+  const seq = ++f.autoSeq;
+  let r;
+  try {
+    r = await flexiCall(f, { type: 'auto', opts: flexiOpts(f) });
+  } catch (err) {
+    return;
+  }
+  if (state.flexi !== f || seq !== f.autoSeq) return;
+  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, link: !!c.link, chain: c.chain }));
   f.edited = false;
   f.selected = null;
   flexiInvalidate();
+  if (!silent) flexiDraw();
 }
 
 function flexiInvalidate() {
   const f = state.flexi;
   if (!f) return;
   f.stale = true;
-  if (f.built) {
-    f.built.errorIds = [];
-    $('flexi-result-stale').hidden = false;
-  }
+  if (f.built) $('flexi-result-stale').hidden = false;
   flexiUpdateMainButton();
+}
+
+// Настройка поменялась: если разрезы не трогали руками — переставим их заново (размеры суставов другие).
+function flexiSettingChanged() {
+  const f = state.flexi;
+  if (!f) return;
+  flexiRenderSettings();
+  flexiInvalidate();
+  if (!f.prep) return;
+  if (!f.edited) flexiAuto(f, false);
+  else flexiDraw();
 }
 
 /* ---------- Вид сверху ---------- */
 
-const flexiView = { img: null, k: 1, ox: 0, oy: 0, drag: null };
+const flexiView = { img: null, k: 1, ox: 0, oy: 0, drag: null, dpr: 1 };
 
 function flexiLayoutCanvas() {
   const f = state.flexi;
   if (!f || !f.prep) return;
   const canvas = $('flexi-canvas');
-  const wrap = $('flexi-top');
-  const cw = wrap.clientWidth || 360;
+  const cw = $('flexi-top').clientWidth || 360;
   const { W, H } = f.prep.grid;
   const ch = Math.round(Math.max(220, Math.min(cw * H / W + 24, (window.innerHeight || 640) * 0.6)));
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -287,7 +367,6 @@ function flexiLayoutCanvas() {
   flexiView.oy = (ch - H * flexiView.k) / 2;
   flexiView.dpr = dpr;
 
-  // картинка высот (вид сверху, ось Y — вверх)
   const img = document.createElement('canvas');
   img.width = W;
   img.height = H;
@@ -297,8 +376,8 @@ function flexiLayoutCanvas() {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const v = hts[y * W + x];
-      const o = ((H - 1 - y) * W + x) * 4;
       if (!v) continue;
+      const o = ((H - 1 - y) * W + x) * 4; // ось Y — вверх
       id.data[o] = id.data[o + 1] = id.data[o + 2] = v;
       id.data[o + 3] = 255;
     }
@@ -307,7 +386,6 @@ function flexiLayoutCanvas() {
   flexiView.img = img;
 }
 
-// мм ↔ точки экрана
 function flexiToScreen(x, y) {
   const g = state.flexi.prep.grid;
   return [flexiView.ox + ((x - g.x0) / g.step) * flexiView.k, flexiView.oy + (g.H - (y - g.y0) / g.step) * flexiView.k];
@@ -316,18 +394,19 @@ function flexiToModel(sx, sy) {
   const g = state.flexi.prep.grid;
   return [g.x0 + ((sx - flexiView.ox) / flexiView.k) * g.step, g.y0 + (g.H - (sy - flexiView.oy) / flexiView.k) * g.step];
 }
-function flexiMmToPx(mm) {
+function flexiPx(mm) {
   return (mm / state.flexi.prep.grid.step) * flexiView.k;
 }
 
-// Порядок сборки: по удалению от ядра. Номер на экране — место в этом порядке.
+// Порядок сборки (номер на экране): от ядра вдоль скелета — как в потоке.
 function flexiOrdered(f) {
-  const core = f.prep.core;
-  return f.cuts.slice().sort((a, b) => Math.hypot(a.P[0] - core[0], a.P[1] - core[1]) - Math.hypot(b.P[0] - core[0], b.P[1] - core[1]));
+  return f.core.orderCuts(f.cuts, f.prep.skel);
 }
 
-function flexiCutR(f, c) {
-  return c.w / Math.cos(f.alpha * Math.PI / 180) + 2 + 0.5; // c ≈ cMax, точное R посчитает сборка
+// Кружок поворота — на конце стрелки n.
+function flexiHandle(f, c) {
+  const L = flexiDims(f, c).Rh + 5;
+  return [c.P[0] + c.n[0] * L, c.P[1] + c.n[1] * L];
 }
 
 function flexiDraw() {
@@ -335,57 +414,51 @@ function flexiDraw() {
   if (!f || !f.prep || !flexiView.img) return;
   const canvas = $('flexi-canvas');
   const ctx = canvas.getContext('2d');
-  const dpr = flexiView.dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(flexiView.dpr, 0, 0, flexiView.dpr, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.imageSmoothingEnabled = true;
   const g = f.prep.grid;
   ctx.drawImage(flexiView.img, flexiView.ox, flexiView.oy, g.W * flexiView.k, g.H * flexiView.k);
 
-  const css = getComputedStyle(document.documentElement);
-  const accent = css.getPropertyValue('--accent').trim() || '#2481cc';
-  const errorIds = (f.built && !f.stale && f.built.errorIds) || [];
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2481cc';
+  const red = (f.built && !f.stale && f.built.redIds) || [];
   const order = flexiOrdered(f);
   order.forEach((c, i) => {
-    const R = flexiCutR(f, c);
+    const d = flexiDims(f, c);
     const [px, py] = flexiToScreen(c.P[0], c.P[1]);
-    const t = [-c.n[1], c.n[0]];
-    const [ax, ay] = flexiToScreen(c.P[0] - t[0] * R, c.P[1] - t[1] * R);
-    const [bx, by] = flexiToScreen(c.P[0] + t[0] * R, c.P[1] + t[1] * R);
-    const [tx, ty] = flexiToScreen(c.P[0] + c.n[0] * R * 0.8, c.P[1] + c.n[1] * R * 0.8);
+    const [hx, hy] = flexiToScreen(...flexiHandle(f, c));
+    const r = flexiPx(d.Rh);
     const selected = f.selected === c.id;
-    const color = errorIds.indexOf(c.id) !== -1 ? FLEXI_RED : accent;
+    const color = red.indexOf(c.id) !== -1 ? FLEXI_RED : accent;
 
-    if (selected) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 8;
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-    }
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = selected ? 4 : 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
-    // стрелка — в сторону лапы
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(tx, ty); ctx.stroke();
-    const ang = Math.atan2(ty - py, tx - px);
+    // кружок — реальный размер сустава
     ctx.beginPath();
-    ctx.moveTo(tx + Math.cos(ang) * 6, ty + Math.sin(ang) * 6);
-    ctx.lineTo(tx + Math.cos(ang + 2.5) * 7, ty + Math.sin(ang + 2.5) * 7);
-    ctx.lineTo(tx + Math.cos(ang - 2.5) * 7, ty + Math.sin(ang - 2.5) * 7);
-    ctx.closePath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = selected ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.18)';
     ctx.fill();
-    // кружок на конце — поворот
-    ctx.beginPath(); ctx.arc(bx, by, selected ? 7 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff'; ctx.fill();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = color; ctx.stroke();
-    // номер в центре
-    ctx.beginPath(); ctx.arc(px, py, 9, 0, Math.PI * 2);
-    ctx.fillStyle = color; ctx.fill();
+    ctx.lineWidth = selected ? 3.5 : 2.5;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    // стрелка n — к лапе
+    ctx.beginPath();
+    ctx.moveTo(px + (hx - px) * (r / Math.max(1, Math.hypot(hx - px, hy - py))), py + (hy - py) * (r / Math.max(1, Math.hypot(hx - px, hy - py))));
+    ctx.lineTo(hx, hy);
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // кружок поворота
+    ctx.beginPath();
+    ctx.arc(hx, hy, selected ? 7 : 5, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '700 11px -apple-system, BlinkMacSystemFont, Roboto, sans-serif';
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // номер (на маленьком кружке — поменьше, чтобы кружок было видно)
+    const small = r < 15;
+    ctx.beginPath();
+    ctx.arc(px, py, small ? 6 : 8.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = (small ? '700 8px ' : '700 10.5px ') + '-apple-system, BlinkMacSystemFont, Roboto, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(i + 1), px, py + 0.5);
@@ -393,56 +466,50 @@ function flexiDraw() {
 
   $('flexi-remove').disabled = f.selected == null;
   $('flexi-add').classList.toggle('is-active', f.addMode);
+  const links = f.cuts.filter((c) => c.link).length;
   $('flexi-count').textContent = f.cuts.length
-    ? 'Разрезов: ' + f.cuts.length + ' → деталей: ' + (f.cuts.length + 1)
-    : 'Разрезов нет — нажми «＋ Разрез» или «↺ Авто»';
+    ? 'Суставов: ' + f.cuts.length + (links ? ' (из них звеньев ' + links + ')' : '') + ' → деталей: ' + (f.cuts.length + 1)
+    : 'Суставов нет — нажми «＋ Разрез» или «↺ Авто»';
   $('flexi-tip').textContent = f.addMode
-    ? 'Тапни по лапе или хвосту — там появится разрез.'
-    : 'Тап по разрезу — выделить. Тяни за центр — сдвинуть (прилипает к скелету), за кружок — повернуть.';
+    ? 'Тапни по лапе или хвосту — там появится сустав.'
+    : 'Кружок — сустав в натуральную величину. Тяни его — сдвинуть (прилипает к скелету), кружок на конце стрелки — повернуть.';
+  flexiRenderSwing(f);
 }
 
 /* ---------- Скелет: ближайшая точка, направление, ширина ---------- */
 
-function flexiSkel(f) {
-  const s = f.prep.skeleton;
-  return { n: s.length / 4, x: (k) => s[k * 4], y: (k) => s[k * 4 + 1], dt: (k) => s[k * 4 + 2], parent: (k) => s[k * 4 + 3] };
-}
-
 function flexiNearestSkel(f, x, y) {
-  const s = flexiSkel(f);
   let best = -1, bd = Infinity;
-  for (let k = 0; k < s.n; k++) {
-    const d = (s.x(k) - x) ** 2 + (s.y(k) - y) ** 2;
+  f.prep.skel.forEach((s, k) => {
+    const d = (s.x - x) ** 2 + (s.y - y) ** 2;
     if (d < bd) { bd = d; best = k; }
-  }
+  });
   return best < 0 ? null : { k: best, dist: Math.sqrt(bd) };
 }
 
-// Направление от ядра наружу: точка минус её предок на 3 мм ближе к ядру.
+// От ядра наружу: точка минус её предок на 3 мм ближе к ядру.
 function flexiSkelDir(f, k) {
-  const s = flexiSkel(f);
+  const s = f.prep.skel;
   let a = k, len = 0;
-  while (s.parent(a) >= 0 && len < 3) {
-    const p = s.parent(a);
-    len += Math.hypot(s.x(a) - s.x(p), s.y(a) - s.y(p));
+  while (s[a].parent >= 0 && len < 3) {
+    const p = s[a].parent;
+    len += Math.hypot(s[a].x - s[p].x, s[a].y - s[p].y);
     a = p;
   }
-  let nx = s.x(k) - s.x(a), ny = s.y(k) - s.y(a);
-  const l = Math.hypot(nx, ny);
-  if (l < 1e-6) {
-    const core = f.prep.core;
-    nx = s.x(k) - core[0]; ny = s.y(k) - core[1];
-  }
-  const l2 = Math.hypot(nx, ny) || 1;
-  return [nx / l2, ny / l2];
+  let nx = s[k].x - s[a].x, ny = s[k].y - s[a].y;
+  if (Math.hypot(nx, ny) < 1e-6) { nx = s[k].x - f.prep.core[0]; ny = s[k].y - f.prep.core[1]; }
+  const l = Math.hypot(nx, ny) || 1;
+  return [nx / l, ny / l];
 }
 
-function flexiSkelWidth(f, x, y) {
-  const s = flexiSkel(f);
+// Полуширина лапы: максимум dt на участке [P, P + 4 мм] — берём точки скелета рядом и чуть дальше от ядра.
+function flexiSkelWidth(f, x, y, n) {
   let w = 0;
-  for (let k = 0; k < s.n; k++) {
-    if ((s.x(k) - x) ** 2 + (s.y(k) - y) ** 2 <= 4) w = Math.max(w, s.dt(k)); // ±2 мм
-  }
+  f.prep.skel.forEach((s) => {
+    const dx = s.x - x, dy = s.y - y;
+    const along = dx * n[0] + dy * n[1];
+    if (along >= -0.6 && along <= 4 && Math.abs(dx * n[1] - dy * n[0]) <= 1.5) w = Math.max(w, s.dt);
+  });
   return w || 3;
 }
 
@@ -460,46 +527,31 @@ function flexiPointerDown(e) {
   const [sx, sy] = flexiPoint(e);
   try { $('flexi-canvas').setPointerCapture(e.pointerId); } catch (err) { /* ок */ }
 
-  // кружок на конце выделенного разреза — поворот
+  // кружок поворота (сначала у выделенного)
+  const byHandle = (c) => {
+    const [hx, hy] = flexiToScreen(...flexiHandle(f, c));
+    return Math.hypot(sx - hx, sy - hy) < 20;
+  };
   const sel = f.cuts.find((c) => c.id === f.selected);
-  if (sel) {
-    const R = flexiCutR(f, sel);
-    const [bx, by] = flexiToScreen(sel.P[0] - sel.n[1] * R, sel.P[1] + sel.n[0] * R);
-    if (Math.hypot(sx - bx, sy - by) < 22) {
-      flexiView.drag = { mode: 'rotate', id: sel.id, pointer: e.pointerId };
-      haptic();
-      return;
-    }
+  const rot = (sel && byHandle(sel) && sel) || f.cuts.find(byHandle);
+  if (rot) {
+    f.selected = rot.id;
+    flexiView.drag = { mode: 'rotate', id: rot.id, pointer: e.pointerId };
+    haptic();
+    flexiDraw();
+    return;
   }
-  // центр разреза — выделить и тянуть
-  let hit = null, hd = 24;
+  // сустав — выделить и тянуть (тап внутри кружка)
+  let hit = null, hd = Infinity;
   f.cuts.forEach((c) => {
     const [px, py] = flexiToScreen(c.P[0], c.P[1]);
     const d = Math.hypot(sx - px, sy - py);
-    if (d < hd) { hd = d; hit = c; }
+    if (d < Math.max(20, flexiPx(flexiDims(f, c).Rh)) && d < hd) { hd = d; hit = c; }
   });
-  if (!hit) {
-    // или кружок поворота любого разреза
-    f.cuts.forEach((c) => {
-      const R = flexiCutR(f, c);
-      const [bx, by] = flexiToScreen(c.P[0] - c.n[1] * R, c.P[1] + c.n[0] * R);
-      const d = Math.hypot(sx - bx, sy - by);
-      if (d < 18 && !hit) {
-        hit = c;
-        f.selected = c.id;
-        flexiView.drag = { mode: 'rotate', id: c.id, pointer: e.pointerId };
-      }
-    });
-    if (hit) {
-      haptic();
-      flexiDraw();
-      return;
-    }
-  }
-  if (hit) {
+  if (hit && !f.addMode) {
     haptic();
     f.selected = hit.id;
-    flexiView.drag = { mode: 'move', id: hit.id, pointer: e.pointerId, moved: false };
+    flexiView.drag = { mode: 'move', id: hit.id, pointer: e.pointerId };
     flexiDraw();
     return;
   }
@@ -507,9 +559,9 @@ function flexiPointerDown(e) {
     const [mx, my] = flexiToModel(sx, sy);
     const near = flexiNearestSkel(f, mx, my);
     if (near) {
-      const s = flexiSkel(f);
-      const P = [s.x(near.k), s.y(near.k)];
-      const c = { id: f.nextId++, P, n: flexiSkelDir(f, near.k), w: flexiSkelWidth(f, P[0], P[1]) };
+      const s = f.prep.skel[near.k];
+      const n = flexiSkelDir(f, near.k);
+      const c = { id: f.nextId++, P: [s.x, s.y], n, w: flexiSkelWidth(f, s.x, s.y, n), link: false, chain: -1 };
       f.cuts.push(c);
       f.selected = c.id;
       f.edited = true;
@@ -533,27 +585,25 @@ function flexiPointerMove(e) {
   e.preventDefault();
   const c = f.cuts.find((x) => x.id === d.id);
   if (!c) return;
-  const [sx, sy] = flexiPoint(e);
-  const [mx, my] = flexiToModel(sx, sy);
+  const [mx, my] = flexiToModel(...flexiPoint(e));
   if (d.mode === 'move') {
-    d.moved = true;
     const near = flexiNearestSkel(f, mx, my);
     const snapMm = Math.max(4, (24 / flexiView.k) * f.prep.grid.step);
     if (near && near.dist <= snapMm) {
       // прилипает к скелету: направление и ширина — оттуда
-      const s = flexiSkel(f);
-      c.P = [s.x(near.k), s.y(near.k)];
+      const s = f.prep.skel[near.k];
+      c.P = [s.x, s.y];
       let n = flexiSkelDir(f, near.k);
       if (n[0] * c.n[0] + n[1] * c.n[1] < 0) n = [-n[0], -n[1]];
       c.n = n;
-      c.w = flexiSkelWidth(f, c.P[0], c.P[1]);
+      c.w = flexiSkelWidth(f, s.x, s.y, n);
     } else {
       c.P = [mx, my];
     }
   } else {
     const tx = mx - c.P[0], ty = my - c.P[1];
     const l = Math.hypot(tx, ty);
-    if (l > 0.5) c.n = [ty / l, -tx / l]; // кружок лежит на +t, где t = (−n.y, n.x)
+    if (l > 0.5) c.n = [tx / l, ty / l];
   }
   f.edited = true;
   flexiInvalidate();
@@ -564,8 +614,6 @@ function flexiPointerUp(e) {
   const d = flexiView.drag;
   if (d && d.pointer === e.pointerId) flexiView.drag = null;
 }
-
-/* ---------- Кнопки над видом сверху ---------- */
 
 function flexiRemove() {
   const f = state.flexi;
@@ -586,27 +634,59 @@ function flexiAddMode() {
   flexiDraw();
 }
 
-function flexiAuto() {
+function flexiAutoBtn() {
   const f = state.flexi;
   if (!f || !f.prep) return;
   haptic();
-  flexiSetAuto(f);
-  flexiDraw();
+  flexiAuto(f, false);
 }
 
-/* ---------- Настройки ---------- */
+/* ---------- Настройки на экране ---------- */
 
-function flexiResetSettingsUi() {
+function flexiSeg(id, value) {
+  document.querySelectorAll('#' + id + ' button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === value));
+}
+
+function flexiRenderSettings() {
   const f = state.flexi;
   if (!f) return;
+  const kit = f.mode === 'kit';
+  document.querySelectorAll('#flexi-mode button').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === f.mode));
+  document.querySelectorAll('.flexi-pip').forEach((el2) => { el2.hidden = kit; });
+  document.querySelectorAll('.flexi-kit').forEach((el2) => { el2.hidden = !kit; });
+  $('flexi-mode-tip').textContent = FLEXI_MODE_TIP[f.mode];
+  $('flexi-hint').textContent = FLEXI_HINT[f.mode];
   $('flexi-length').value = String(f.length);
   $('flexi-length-val').textContent = f.length + ' мм';
-  $('flexi-alpha').value = String(f.alpha);
-  $('flexi-alpha-val').textContent = f.alpha + '°';
+  $('flexi-small').hidden = f.length >= 120;
   $('flexi-cut').value = String(f.cut);
   $('flexi-cut-val').textContent = cadMm(f.cut) + ' мм';
-  document.querySelectorAll('#flexi-gap button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.gap) === f.g));
-  $('flexi-small').hidden = f.length >= 120;
+  flexiSeg('flexi-gap', f.pip.g);
+  $('flexi-alpha').value = String(f.pip.alpha);
+  $('flexi-alpha-val').textContent = '±' + f.pip.alpha + '°';
+  flexiSeg('flexi-fit', f.kit.g);
+  flexiSeg('flexi-snap', f.kit.snap);
+  flexiSeg('flexi-plate', f.kit.plate);
+  const links = kit ? f.kit.links : f.pip.links;
+  $('flexi-links').checked = links;
+  $('flexi-links-warn').hidden = !(kit && links);
+  document.querySelectorAll('.flexi-links-opt').forEach((el2) => { el2.hidden = !links || (el2.classList.contains('flexi-pip') && kit); });
+  $('flexi-k').value = String(f.k);
+  $('flexi-k-val').textContent = f.k.toFixed(1);
+  $('flexi-aseg').value = String(f.alphaSeg);
+  $('flexi-aseg-val').textContent = '±' + f.alphaSeg + '°';
+  flexiRenderSwing(f);
+}
+
+// 🧩 Сборная: поворот не задаётся, а получается из размеров — показываем «ходит ±N°».
+function flexiRenderSwing(f) {
+  if (!f || f.mode !== 'kit' || !f.core || !f.prep || !f.cuts.length) {
+    $('flexi-swing').textContent = f && f.mode === 'kit' ? 'Поворот считается сам из размеров сустава' : '';
+    return;
+  }
+  const a = f.cuts.map((c) => flexiDims(f, c).alpha);
+  const lo = Math.round(Math.min(...a)), hi = Math.round(Math.max(...a));
+  $('flexi-swing').textContent = 'Ходит ±' + (lo === hi ? lo : lo + '–' + hi) + '°';
 }
 
 function flexiOnLength() {
@@ -634,44 +714,25 @@ function flexiSchedulePrepare() {
   f.prepTimer = setTimeout(() => flexiPrepare(f, false), 450);
 }
 
-function flexiOnAlpha() {
-  const f = state.flexi;
-  if (!f) return;
-  f.alpha = Number($('flexi-alpha').value);
-  $('flexi-alpha-val').textContent = f.alpha + '°';
-  flexiInvalidate();
-  flexiDraw();
-}
-
-function flexiOnGap(b) {
-  const f = state.flexi;
-  if (!f) return;
-  haptic();
-  f.g = Number(b.dataset.gap);
-  document.querySelectorAll('#flexi-gap button').forEach((x) => x.classList.toggle('is-active', x === b));
-  flexiInvalidate();
-}
-
 /* ---------- Сборка ---------- */
 
 async function flexiBuild() {
   const f = state.flexi;
   if (!f || !f.prep || state.flexiBusy) return;
   if (!f.cuts.length) {
-    toast('Добавь хотя бы один разрез');
+    toast('Добавь хотя бы один сустав');
     return;
   }
   haptic();
   clearTimeout(f.prepTimer);
-  const order = flexiOrdered(f);
   state.flexiBusy = true;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Сустав 1 из ' + order.length + '…';
+  $('busy-text').textContent = 'Готовлю суставы…';
   let r;
   try {
     r = await flexiCall(f, {
-      type: 'build', g: f.g, alpha: f.alpha,
-      cuts: order.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w })),
+      type: 'build', opts: flexiOpts(f),
+      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, link: c.link, chain: c.chain })),
     });
   } catch (err) {
     state.flexiBusy = false;
@@ -687,48 +748,50 @@ async function flexiBuild() {
   $('busy').hidden = true;
   if (state.flexi !== f) return;
 
-  const numOf = {};
-  order.forEach((c, i) => { numOf[c.id] = i + 1; });
-  f.built = {
-    stl: r.stl,
-    parts: r.parts,
-    joints: r.joints,
-    warnings: r.warnings,
-    errors: r.errors,
-    errorIds: r.errors.map((x) => x.id),
-    numOf,
-  };
+  const errors = r.notes.filter((x) => x.level === 'error');
+  f.built = Object.assign(r, { mode: f.mode, errors, alphaByJoint: r.joints.map((J) => J.alpha) });
   f.stale = false;
+  f.view = 'assembled';
   $('flexi-result').hidden = false;
   $('flexi-result-stale').hidden = true;
-  flexiRenderNotes(f);
+  flexiRenderResult(f);
   flexiDraw();
-  await flexiShowPreview(f);
+  f.previewReady = flexiShowPreview(f);
+  await f.previewReady;
   flexiUpdateMainButton();
-  if (r.errors.length) {
-    hapticNotify('error');
-    toast('Есть разрезы с ошибкой — они красные');
-  } else {
-    hapticNotify('success');
-  }
+  if (errors.length) hapticNotify('error');
+  else hapticNotify('success');
   setTimeout(() => $('flexi-result').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
 }
 
-function flexiRenderNotes(f) {
+function flexiRenderResult(f) {
   const b = f.built;
+  const sum = $('flexi-summary');
+  sum.className = 'flexi-summary ' + (b.errors.length ? 'is-bad' : 'is-ok');
+  sum.textContent = b.errors.length
+    ? '⚠ ' + b.errors.length + ' ' + plural(b.errors.length, 'проблема', 'проблемы', 'проблем') + ' — смотри ниже'
+    : b.summary;
+
   const box = $('flexi-notes');
   box.textContent = '';
   const add = (cls, text) => box.appendChild(el('div', 'flexi-note ' + cls, text));
-  b.errors.forEach((x) => add('is-error', '✖ Разрез ' + (b.numOf[x.id] || '?') + ': ' + x.text));
-  const seen = {};
-  b.warnings.forEach((x) => {
-    const key = x.text + '|' + x.id;
-    if (seen[key]) return;
-    seen[key] = 1;
-    add('is-warn', '⚠ Разрез ' + (b.numOf[x.id] || '?') + ': ' + x.text);
+  b.errors.forEach((x) => add('is-error', '✖ ' + x.text));
+  b.notes.filter((x) => x.level === 'warn').forEach((x) => add('is-warn', '⚠ ' + x.text));
+
+  const chains = $('flexi-chains');
+  chains.textContent = '';
+  b.chains.forEach((c, i) => {
+    const name = b.chains.length === 1 ? 'Хвост' : 'Цепочка ' + (i + 1);
+    chains.appendChild(el('div', '', name + ': ' + c.count + ' ' + plural(c.count, 'звено', 'звена', 'звеньев') + ', гнётся до ±' + Math.round(c.bend) + '°'));
   });
-  if (!b.errors.length && !b.warnings.length) add('is-ok', '✔ Все суставы собрались без замечаний');
-  $('flexi-parts').textContent = 'Деталей: ' + b.parts.length + ' · файл ' + cadMm(b.stl.byteLength / 1048576) + ' МБ';
+
+  const size = b.mode === 'kit'
+    ? b.plates.reduce((s, p) => s + p.stl.byteLength, 0)
+    : b.stl.byteLength;
+  $('flexi-parts').textContent = 'Деталей: ' + b.parts.length + (b.mode === 'kit' ? ' · столов: ' + b.plates.length + ' по ' + f.kit.plate + ' мм' : '') +
+    ' · ' + cadMm(size / 1048576) + ' МБ';
+  $('flexi-view').hidden = b.mode !== 'kit';
+  document.querySelectorAll('#flexi-view button').forEach((x) => x.classList.toggle('is-active', x.dataset.view === f.view));
 }
 
 /* ---------- 3D-превью ---------- */
@@ -755,39 +818,66 @@ async function flexiShowPreview(f) {
   key.position.set(1, 1.5, 2);
   camera.add(key);
 
-  // иерархия суставов: поворот лапы вокруг вертикали через P, вложенные — вместе с родителем
-  const root = new T.Group();
-  scene.add(root);
-  const holders = [root];
-  const pivots = [];
-  const jointHolder = [];
   const b = f.built;
+  const geoms = b.parts.map((p) => flexiGeometry(T, p));
+  const mats = b.parts.map((_, i) => new T.MeshStandardMaterial({ color: FLEXI_COLORS[i % FLEXI_COLORS.length], roughness: 0.8, metalness: 0 }));
+
+  // «Собранная»: иерархия суставов — лапа поворачивается вокруг вертикали через P вместе с вложенными звеньями
+  const assembled = new T.Group();
+  const pivots = [];
+  const holder = [];
+  const depthOf = (j) => { let d = 0; for (let x = j; x >= 0; x = b.joints[x].parent) d++; return d; };
   const mkHolder = (j) => {
-    if (jointHolder[j]) return jointHolder[j];
+    if (holder[j]) return holder[j];
     const J = b.joints[j];
-    const parentHolder = J.parent >= 0 ? mkHolder(J.parent) : root;
+    const parentHolder = J.parent >= 0 ? mkHolder(J.parent) : assembled;
     const pivot = new T.Group();
     pivot.position.set(J.P[0], J.P[1], 0);
     const inner = new T.Group();
     inner.position.set(-J.P[0], -J.P[1], 0);
     pivot.add(inner);
     parentHolder.add(pivot);
-    pivots.push({ pivot, j });
-    jointHolder[j] = inner;
-    holders.push(inner);
+    pivots.push({ pivot, alpha: J.alpha * Math.PI / 180, depth: depthOf(j), j });
+    holder[j] = inner;
     return inner;
   };
   const box = new T.Box3();
   const meshes = [];
   b.parts.forEach((p, i) => {
-    const geometry = flexiGeometry(T, p);
-    geometry.computeBoundingBox();
-    box.union(geometry.boundingBox);
-    const material = new T.MeshStandardMaterial({ color: FLEXI_COLORS[i % FLEXI_COLORS.length], roughness: 0.8, metalness: 0 });
-    const mesh = new T.Mesh(geometry, material);
+    geoms[i].computeBoundingBox();
+    box.union(geoms[i].boundingBox);
+    const mesh = new T.Mesh(geoms[i], mats[i]);
     meshes.push(mesh);
-    (p.joint >= 0 ? mkHolder(p.joint) : root).add(mesh);
+    (p.joint >= 0 ? mkHolder(p.joint) : assembled).add(mesh);
   });
+  scene.add(assembled);
+
+  // «Как на столе» (🧩 Сборная): столы рядом, квадрат каждого стола
+  let platesGroup = null;
+  if (b.mode === 'kit') {
+    platesGroup = new T.Group();
+    const size = f.kit.plate;
+    b.plates.forEach((pl, pi) => {
+      const ox = pi * (size + 30);
+      const sq = new T.GridHelper(size, 1, 0x888888, 0x888888);
+      sq.rotation.x = Math.PI / 2;
+      sq.position.set(ox + size / 2, size / 2, 0);
+      platesGroup.add(sq);
+      const grid = new T.GridHelper(size, size / 20, 0xcccccc, 0xcccccc);
+      grid.rotation.x = Math.PI / 2;
+      grid.position.set(ox + size / 2, size / 2, -0.05);
+      grid.material.transparent = true;
+      grid.material.opacity = 0.5;
+      platesGroup.add(grid);
+      pl.items.forEach((it) => {
+        const m = new T.Mesh(geoms[it.index], mats[it.index]);
+        m.position.set(ox + it.dx, it.dy, 0);
+        platesGroup.add(m);
+      });
+    });
+    platesGroup.visible = false;
+    scene.add(platesGroup);
+  }
 
   const center = new T.Vector3();
   const size = new T.Vector3();
@@ -805,8 +895,8 @@ async function flexiShowPreview(f) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.1;
   controls.enablePan = false;
-  controls.minDistance = radius * 0.6;
-  controls.maxDistance = radius * 8;
+  controls.minDistance = radius * 0.4;
+  controls.maxDistance = radius * 12;
   controls.update();
 
   const resize = () => {
@@ -820,30 +910,56 @@ async function flexiShowPreview(f) {
     flexiPrev.ro = new ResizeObserver(resize);
     flexiPrev.ro.observe(stage);
   }
-  const alphaRad = f.alpha * Math.PI / 180;
   const loop = (now) => {
     flexiPrev.raf = requestAnimationFrame(loop);
-    if (flexiPrev.wiggle) {
+    if (flexiPrev.wiggle && assembled.visible) {
       const t = (now - flexiPrev.t0) / 1000;
-      pivots.forEach((p, i) => { p.pivot.rotation.z = Math.sin(t * 2.2 + i * 1.3) * alphaRad; });
+      // волна: дальние звенья отстают от ближних
+      pivots.forEach((p) => { p.pivot.rotation.z = Math.sin(t * 2.4 - p.depth * 0.7 + p.j * 0.4) * p.alpha; });
     }
     controls.update();
     renderer.render(scene, camera);
   };
   flexiPrev.raf = requestAnimationFrame(loop);
-  flexiPrev.v = { T, renderer, scene, camera, controls, meshes, pivots, center, radius, dist };
+  flexiPrev.v = { T, renderer, scene, camera, controls, geoms, mats, pivots, center, radius, dist, assembled, platesGroup, box };
   flexiSetWiggle(false);
+  flexiSetView(f, 'assembled');
 }
 
 function flexiGeometry(T, p) {
   const g = new T.BufferGeometry();
   g.setAttribute('position', new T.BufferAttribute(p.vert, 3));
   g.setIndex(new T.BufferAttribute(p.tri, 1));
-  // плоские грани: разворачиваем индекс, чтобы нормали были по граням
-  const flat = g.toNonIndexed();
+  const flat = g.toNonIndexed(); // нормали по граням
   g.dispose();
   flat.computeVertexNormals();
   return flat;
+}
+
+function flexiSetView(f, view) {
+  const v = flexiPrev.v;
+  f.view = view;
+  document.querySelectorAll('#flexi-view button').forEach((x) => x.classList.toggle('is-active', x.dataset.view === view));
+  $('flexi-wiggle').hidden = view !== 'assembled'; // «Пошевелить» — только в собранной
+  if (!v) return;
+  const plates = view === 'plates' && v.platesGroup;
+  v.assembled.visible = !plates;
+  if (v.platesGroup) v.platesGroup.visible = !!plates;
+  if (plates) flexiSetWiggle(false);
+  // камера: на всё, что видно
+  const T = v.T;
+  const box = plates ? new T.Box3().setFromObject(v.platesGroup) : v.box;
+  const center = new T.Vector3(), size = new T.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+  const radius = Math.max(size.length() / 2, 1);
+  const dist = (radius / Math.sin((35 / 2) * Math.PI / 180)) * 1.05;
+  v.controls.target.copy(center);
+  v.camera.position.copy(center).add(new T.Vector3(plates ? 0.2 : 0.6, plates ? -0.6 : -1, plates ? 1.6 : 1.1).normalize().multiplyScalar(dist));
+  v.camera.far = radius * 100;
+  v.camera.updateProjectionMatrix();
+  v.controls.maxDistance = radius * 12;
+  v.controls.update();
 }
 
 function flexiSetWiggle(on) {
@@ -861,18 +977,22 @@ function flexiDestroyPreview() {
   flexiPrev.v = null;
   if (!v) return;
   v.controls.dispose();
-  v.meshes.forEach((m) => { m.geometry.dispose(); m.material.dispose(); });
+  v.geoms.forEach((g) => g.dispose());
+  v.mats.forEach((m) => m.dispose());
   v.renderer.dispose();
   v.renderer.forceContextLoss();
   v.renderer.domElement.remove();
 }
 
-// Снимок 800×800, вид 3/4 сверху, светлый фон, суставы в покое.
+// Снимок 800×800: «Собранная», вид 3/4 сверху, светлый фон, суставы в покое.
 function flexiSnapshot() {
   const v = flexiPrev.v;
   const r = v.renderer, cam = v.camera;
   const wasWiggle = flexiPrev.wiggle;
+  const wasPlates = v.platesGroup && v.platesGroup.visible;
   v.pivots.forEach((p) => { p.pivot.rotation.z = 0; });
+  v.assembled.visible = true;
+  if (v.platesGroup) v.platesGroup.visible = false;
   const savedPos = cam.position.clone(), savedAspect = cam.aspect, savedRatio = r.getPixelRatio();
   const stage = $('flexi-3d');
   r.setPixelRatio(1);
@@ -891,14 +1011,18 @@ function flexiSnapshot() {
   cam.position.copy(savedPos);
   cam.lookAt(v.controls.target);
   cam.updateProjectionMatrix();
+  if (wasPlates) {
+    v.assembled.visible = false;
+    v.platesGroup.visible = true;
+  }
   flexiPrev.wiggle = wasWiggle;
   return url;
 }
 
-/* ---------- Прислать STL в чат ---------- */
+/* ---------- Прислать в чат ---------- */
 
 function flexiReady(f) {
-  return !!(f && f.built && !f.stale && !f.built.errors.length);
+  return !!(f && f.built && !f.stale && !f.built.errors.length && f.built.joints.length);
 }
 
 function flexiUpdateMainButton() {
@@ -921,27 +1045,40 @@ function flexiUpdateMainButton() {
 
 async function flexiExport() {
   const f = state.flexi;
+  if (f && f.previewReady) await f.previewReady; // снимок делаем из превью
   if (!flexiReady(f) || state.flexiBusy || !flexiPrev.v) {
     if (f && f.built && f.stale) toast('Сначала пересобери — нажми «🔧 Собрать»');
+    else if (f && f.built && f.built.errors.length) toast('Есть красные ошибки — исправь их и пересобери');
     return;
   }
   haptic();
-  const bytes = f.built.stl;
-  if (bytes.byteLength > FLEXI_MAX_FILE) {
+  const b = f.built;
+  const files = b.mode === 'kit'
+    ? b.plates.map((p, i) => ({ bytes: p.stl, plate: (i + 1) + '/' + b.plates.length }))
+    : [{ bytes: b.stl }];
+  if (files.some((x) => x.bytes.byteLength > FLEXI_MAX_FILE)) {
     hapticNotify('error');
-    alertBox('Модель слишком подробная для отправки (больше 12 МБ)');
+    alertBox('Модель слишком подробная для отправки (файл больше 12 МБ)');
     return;
   }
   state.flexiBusy = true;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Отправляю в чат…';
-  let r;
-  try {
-    const snapshot = flexiSnapshot();
-    const file = await cadBlobToDataUrl(bytes);
-    r = await cadPost({ a: 'flexi', id: f.id, file, snapshot }, 120000);
-  } catch (e) {
-    r = { status: 0, data: null };
+  let snapshot;
+  try { snapshot = flexiSnapshot(); } catch (e) { snapshot = ''; }
+  let r = { status: 0, data: null };
+  for (let i = 0; i < files.length; i++) {
+    $('busy-text').textContent = files.length > 1 ? 'Отправляю стол ' + (i + 1) + ' из ' + files.length + '…' : 'Отправляю в чат…';
+    try {
+      const params = { a: 'flexi', id: f.id, file: await cadBlobToDataUrl(files[i].bytes), snapshot };
+      if (b.mode === 'kit') {
+        params.kit = '1';
+        params.plate = files[i].plate;
+      }
+      r = await cadPost(params, 120000); // столы — по очереди, ждём ответ на каждый
+    } catch (e) {
+      r = { status: 0, data: null };
+    }
+    if (!(r.data && r.data.ok === true)) break;
   }
   state.flexiBusy = false;
   $('busy').hidden = true;
@@ -967,12 +1104,50 @@ function bindFlexi() {
   canvas.addEventListener('pointercancel', flexiPointerUp);
   $('flexi-remove').addEventListener('click', flexiRemove);
   $('flexi-add').addEventListener('click', flexiAddMode);
-  $('flexi-auto').addEventListener('click', flexiAuto);
+  $('flexi-auto').addEventListener('click', flexiAutoBtn);
   $('flexi-length').addEventListener('input', flexiOnLength);
   $('flexi-cut').addEventListener('input', flexiOnCut);
-  $('flexi-alpha').addEventListener('input', flexiOnAlpha);
-  document.querySelectorAll('#flexi-gap button').forEach((b) => b.addEventListener('click', () => flexiOnGap(b)));
+
+  const withF = (fn) => (e) => { const f = state.flexi; if (f) fn(f, e); };
+  document.querySelectorAll('#flexi-mode button').forEach((b) => b.addEventListener('click', withF((f) => {
+    if (f.mode === b.dataset.mode) return;
+    haptic();
+    f.mode = b.dataset.mode;
+    flexiSettingChanged();
+  })));
+  const seg = (id, apply) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.addEventListener('click', withF((f) => {
+    haptic();
+    apply(f, Number(b.dataset.v));
+    flexiSettingChanged();
+  })));
+  seg('flexi-gap', (f, v) => { f.pip.g = v; });
+  seg('flexi-fit', (f, v) => { f.kit.g = v; });
+  seg('flexi-snap', (f, v) => { f.kit.snap = v; });
+  seg('flexi-plate', (f, v) => { f.kit.plate = v; flexiStore('grava.flexi.plate', String(v)); });
+  let sliderTimer = 0;
+  const slider = (id, apply) => $(id).addEventListener('input', withF((f) => {
+    apply(f, Number($(id).value));
+    flexiRenderSettings();
+    flexiInvalidate();
+    if (f.prep) flexiDraw();
+    clearTimeout(sliderTimer);
+    sliderTimer = setTimeout(() => { if (state.flexi === f && !f.edited) flexiAuto(f, false); }, 350);
+  }));
+  slider('flexi-alpha', (f, v) => { f.pip.alpha = v; });
+  slider('flexi-k', (f, v) => { f.k = v; });
+  slider('flexi-aseg', (f, v) => { f.alphaSeg = v; });
+  $('flexi-links').addEventListener('change', withF((f) => {
+    haptic();
+    if (f.mode === 'kit') f.kit.links = $('flexi-links').checked;
+    else f.pip.links = $('flexi-links').checked;
+    flexiSettingChanged();
+  }));
+
   $('flexi-build').addEventListener('click', flexiBuild);
+  document.querySelectorAll('#flexi-view button').forEach((b) => b.addEventListener('click', withF((f) => {
+    haptic();
+    flexiSetView(f, b.dataset.view);
+  })));
   $('flexi-wiggle').addEventListener('click', () => {
     haptic();
     flexiSetWiggle(!flexiPrev.wiggle);
