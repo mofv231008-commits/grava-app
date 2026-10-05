@@ -1,8 +1,8 @@
-/* Грава — фоновый поток сборщика шарниров (manifold-3d, WebAssembly). */
+/* Грава — фоновый поток сборщика шарниров «⛓ Цепочка» (manifold-3d, WebAssembly). */
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
-  parseSTL, writeSTL, loadModel, placeModel, analyze, autoCuts, orderCuts, buildJoints, layoutPlates, meshOf, FlexiError,
-} from './flexi-core.js?v=2';
+  parseSTL, writeSTL, loadModel, placeModel, analyze, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
+} from './flexi-core.js?v=3';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
@@ -54,8 +54,8 @@ self.onmessage = async (e) => {
       if (!model) throw new FlexiError('no_model');
       const opts = msg.opts;
       const cuts = orderCuts(msg.cuts, an.skeleton);
-      const res = buildJoints(wasm, model, mesh, an, cuts, opts, (phase, k, n, link) => {
-        self.postMessage({ type: 'progress', id: msg.id, phase, k, n, link: !!link, links: cuts.filter((c) => c.link).length });
+      const res = buildJoints(wasm, model, mesh, an, cuts, opts, (phase, k, n) => {
+        self.postMessage({ type: 'progress', id: msg.id, phase, k, n });
       });
       const meshes = res.parts.map((p) => meshOf(p.manifold));
       const transfer = [];
@@ -66,28 +66,11 @@ self.onmessage = async (e) => {
         return { vert, tri, joint: res.parts[i].joint, volume: res.parts[i].manifold.volume() };
       });
 
-      let stl = null;
-      let plates = null;
-      if (opts.mode === 'kit') {
-        // раскладка на столы: каждый стол — свой STL
-        const lay = layoutPlates(res.parts.map((p) => p.manifold.boundingBox()), opts.plate);
-        lay.tooBig.forEach((i) => {
-          res.notes.push({ id: null, level: 'error', text: 'Деталь ' + (i + 1) + ' больше стола — уменьши длину фигурки' });
-        });
-        plates = lay.plates.map((items) => {
-          const ms = items.map((it) => res.parts[it.index].manifold.translate([it.dx, it.dy, 0]));
-          const file = writeSTL(ms.map(meshOf));
-          ms.forEach((m) => m.delete());
-          transfer.push(file);
-          return { items, stl: file };
-        });
-      } else {
-        stl = writeSTL(meshes);
-        transfer.push(stl);
-      }
+      const stl = writeSTL(meshes);
+      transfer.push(stl);
       res.parts.forEach((p) => p.manifold.delete());
 
-      // цепочки звеньев: «Хвост: 9 звеньев, гнётся до ±135°»
+      // ветви-цепочки: сколько звеньев и насколько гнётся (звенья · α)
       const chains = {};
       res.joints.forEach((J) => {
         if (J.chain < 0) return;
@@ -97,7 +80,7 @@ self.onmessage = async (e) => {
       });
       self.postMessage({
         type: 'built', id: msg.id, parts, joints: res.joints, notes: res.notes, redIds: res.redIds,
-        summary: res.summary, num: res.num, order: cuts.map((c) => c.id), stl, plates,
+        summary: res.summary, num: res.num, order: cuts.map((c) => c.id), stl,
         chains: Object.values(chains),
       }, transfer);
     }

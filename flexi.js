@@ -1,35 +1,18 @@
-/* Грава — экран «🦴 Шарниры»: подвижная фигурка.
-   Режимы: 🧩 Сборная (детали печатаются раздельно и защёлкиваются) и 🖨 Целиком (print-in-place).
+/* Грава — экран «🦴 Шарниры», режим «⛓ Цепочка»: фигурка печатается сразу подвижной.
+   Каждая ветвь (лапы, хвост, щупальца, шея) — цепочка коротких звеньев.
    Считает фоновый поток flexi-worker.js; размеры суставов и порядок — из flexi-core.js (тот же код).
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=2';
-const FLEXI_CORE_URL = './flexi-core.js?v=2';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=3';
+const FLEXI_CORE_URL = './flexi-core.js?v=3';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 const FLEXI_COLORS = [0xb8b8b8, 0x6fa8dc, 0xf6b26b, 0x93c47d, 0xe06666, 0x8e7cc3, 0xffd966, 0x76a5af, 0xc27ba0, 0xa2c4c9, 0xd5a6bd, 0xb6d7a8, 0xf9cb9c, 0x9fc5e8, 0xea9999];
 const FLEXI_RED = '#e53935';
-const FLEXI_HINT = {
-  pip: 'Печатай без поддержек, масштаб 100%, слой 0.2. После печати разработай каждый сустав. Прилипло — зазор 0.55 и пересобери. Болтается — 0.35.',
-  kit: 'Печатай детали как разложены, без поддержек, слой 0.2. Сборка: вдави кулак лапы в кольцо сбоку до щелчка. Туго — натяг 0.2, болтается — 0.5.',
-};
-const FLEXI_MODE_TIP = {
-  kit: 'Детали печатаются отдельно и защёлкиваются — ничего не слипнется, сустав держит позу.',
-  pip: 'Печатается сразу подвижной, без сборки.',
-};
-
 let flexiCore = null;
 function flexiLoadCore() {
   if (!flexiCore) flexiCore = import(FLEXI_CORE_URL).catch((e) => { flexiCore = null; throw e; });
   return flexiCore;
-}
-
-function flexiStore(key, value) {
-  try {
-    if (value === undefined) return localStorage.getItem(key);
-    localStorage.setItem(key, value);
-  } catch (e) { /* приватный режим — не страшно */ }
-  return null;
 }
 
 /* ---------- Открыть / закрыть ---------- */
@@ -47,7 +30,6 @@ function openFlexi(id) {
   }
   if (state.flexi) flexiTeardown();
 
-  const plate = Number(flexiStore('grava.flexi.plate')) || 220;
   const f = state.flexi = {
     id,
     core: null,
@@ -58,9 +40,7 @@ function openFlexi(id) {
     origLen: 0,
     length: 150,
     cut: 1,
-    mode: 'kit',
-    pip: { g: 0.45, alpha: 20, links: true },
-    kit: { g: 0.2, snap: 0.35, links: false, plate: [180, 220, 250, 300].indexOf(plate) >= 0 ? plate : 220 },
+    g: 0.45,
     k: 1.2,
     alphaSeg: 15,
     prep: null,
@@ -73,7 +53,6 @@ function openFlexi(id) {
     stale: true,
     prepTimer: 0,
     autoSeq: 0,
-    view: 'assembled',
   };
 
   $('flexi-missing').hidden = true;
@@ -165,16 +144,13 @@ class FlexiUiError extends Error {
 
 /* ---------- Настройки сборки ---------- */
 
-// Опции для flexi-core: размеры суставов, автопоиск, раскладка.
+// Опции для flexi-core: размеры звена и шаг цепочки.
 function flexiOpts(f) {
-  if (f.mode === 'kit') {
-    return { mode: 'kit', g: f.kit.g, snap: f.kit.snap, plate: f.kit.plate, links: f.kit.links, k: f.k, alphaSeg: f.alphaSeg };
-  }
-  return { mode: 'pip', g: f.pip.g, alpha: f.pip.alpha, links: f.pip.links, k: f.k, alphaSeg: f.alphaSeg };
+  return { g: f.g, alphaSeg: f.alphaSeg, k: f.k };
 }
 
 function flexiDims(f, c) {
-  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]), c.link);
+  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]));
 }
 
 // Верх модели в радиусе 3 мм — по картинке высот (точное значение считает поток при сборке).
@@ -200,8 +176,8 @@ function flexiWorker(f) {
     const msg = e.data || {};
     if (msg.type === 'progress') {
       $('busy-text').textContent = msg.phase === 'check'
-        ? 'Проверяю суставы… ' + msg.k + ' из ' + msg.n
-        : (msg.link ? 'Звено ' : 'Сустав ') + msg.k + ' из ' + msg.n + '…';
+        ? 'Проверяю звенья… ' + msg.k + ' из ' + msg.n
+        : 'Звено ' + msg.k + ' из ' + msg.n + '…';
       return;
     }
     const p = f.pending[msg.id];
@@ -321,7 +297,7 @@ async function flexiAuto(f, silent) {
     return;
   }
   if (state.flexi !== f || seq !== f.autoSeq) return;
-  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, link: !!c.link, chain: c.chain }));
+  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain }));
   f.edited = false;
   f.selected = null;
   flexiInvalidate();
@@ -336,7 +312,7 @@ function flexiInvalidate() {
   flexiUpdateMainButton();
 }
 
-// Настройка поменялась: если разрезы не трогали руками — переставим их заново (размеры суставов другие).
+// Настройка поменялась: если звенья не трогали руками — переставим их заново (размеры другие).
 function flexiSettingChanged() {
   const f = state.flexi;
   if (!f) return;
@@ -403,10 +379,13 @@ function flexiOrdered(f) {
   return f.core.orderCuts(f.cuts, f.prep.skel);
 }
 
-// Кружок поворота — на конце стрелки n.
+// Половина черты поперёк ветви; ручка поворота — на её конце.
+function flexiHalfBar(f, c) {
+  return Math.max(c.w, flexiDims(f, c).Rh) + 2;
+}
 function flexiHandle(f, c) {
-  const L = flexiDims(f, c).Rh + 5;
-  return [c.P[0] + c.n[0] * L, c.P[1] + c.n[1] * L];
+  const L = flexiHalfBar(f, c);
+  return [c.P[0] - c.n[1] * L, c.P[1] + c.n[0] * L];
 }
 
 function flexiDraw() {
@@ -430,27 +409,32 @@ function flexiDraw() {
     const selected = f.selected === c.id;
     const color = red.indexOf(c.id) !== -1 ? FLEXI_RED : accent;
 
-    // кружок — реальный размер сустава
+    // кружок — реальный размер звена (наружный радиус кольца Rh)
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fillStyle = selected ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.18)';
+    ctx.fillStyle = selected ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)';
     ctx.fill();
-    ctx.lineWidth = selected ? 3.5 : 2.5;
+    ctx.lineWidth = selected ? 3 : 2;
     ctx.strokeStyle = color;
     ctx.stroke();
-    // стрелка n — к лапе
+    // черта поперёк ветви — место разреза
+    const L = flexiHalfBar(f, c);
+    const [ax, ay] = flexiToScreen(c.P[0] + c.n[1] * L, c.P[1] - c.n[0] * L);
     ctx.beginPath();
-    ctx.moveTo(px + (hx - px) * (r / Math.max(1, Math.hypot(hx - px, hy - py))), py + (hy - py) * (r / Math.max(1, Math.hypot(hx - px, hy - py))));
+    ctx.moveTo(ax, ay);
     ctx.lineTo(hx, hy);
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = selected ? 3.5 : 2.5;
+    ctx.lineCap = 'round';
     ctx.stroke();
-    // кружок поворота
-    ctx.beginPath();
-    ctx.arc(hx, hy, selected ? 7 : 5, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
+    // ручка поворота
+    if (selected) {
+      ctx.beginPath();
+      ctx.arc(hx, hy, 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
     // номер (на маленьком кружке — поменьше, чтобы кружок было видно)
     const small = r < 15;
     ctx.beginPath();
@@ -466,14 +450,22 @@ function flexiDraw() {
 
   $('flexi-remove').disabled = f.selected == null;
   $('flexi-add').classList.toggle('is-active', f.addMode);
-  const links = f.cuts.filter((c) => c.link).length;
-  $('flexi-count').textContent = f.cuts.length
-    ? 'Суставов: ' + f.cuts.length + (links ? ' (из них звеньев ' + links + ')' : '') + ' → деталей: ' + (f.cuts.length + 1)
-    : 'Суставов нет — нажми «＋ Разрез» или «↺ Авто»';
+  $('flexi-count').textContent = flexiChainInfo(f);
   $('flexi-tip').textContent = f.addMode
-    ? 'Тапни по лапе или хвосту — там появится сустав.'
-    : 'Кружок — сустав в натуральную величину. Тяни его — сдвинуть (прилипает к скелету), кружок на конце стрелки — повернуть.';
-  flexiRenderSwing(f);
+    ? 'Тапни по лапе или хвосту — там появится звено.'
+    : 'Тап по звену — выделить («🗑 Убрать» сольёт соседние). Тяни — сдвинуть (прилипает к скелету), кружок на конце черты — повернуть.';
+}
+
+// «8 ветвей · 34 звена · хвост гнётся до ±120°»: самая длинная цепочка — звенья × α.
+function flexiChainInfo(f) {
+  if (!f.cuts.length) return 'Звеньев нет — нажми «↺ Авто» или «＋ Звено»';
+  const per = {};
+  f.cuts.forEach((c) => { per[c.chain] = (per[c.chain] || 0) + 1; });
+  const counts = Object.values(per);
+  const longest = Math.max(...counts);
+  const nb = counts.length, nl = f.cuts.length;
+  return nb + ' ' + plural(nb, 'ветвь', 'ветви', 'ветвей') + ' · ' + nl + ' ' + plural(nl, 'звено', 'звена', 'звеньев') +
+    ' · ' + (nb === 1 ? 'гнётся' : 'хвост гнётся') + ' до ±' + longest * f.alphaSeg + '°';
 }
 
 /* ---------- Скелет: ближайшая точка, направление, ширина ---------- */
@@ -530,10 +522,12 @@ function flexiPointerDown(e) {
   // кружок поворота (сначала у выделенного)
   const byHandle = (c) => {
     const [hx, hy] = flexiToScreen(...flexiHandle(f, c));
-    return Math.hypot(sx - hx, sy - hy) < 20;
+    const [px, py] = flexiToScreen(c.P[0], c.P[1]);
+    const dh = Math.hypot(sx - hx, sy - hy);
+    return dh < 20 && dh < Math.hypot(sx - px, sy - py); // на маленьком звене ручка близко к центру — побеждает ближайшее
   };
   const sel = f.cuts.find((c) => c.id === f.selected);
-  const rot = (sel && byHandle(sel) && sel) || f.cuts.find(byHandle);
+  const rot = sel && byHandle(sel) ? sel : null; // ручка видна только у выделенного
   if (rot) {
     f.selected = rot.id;
     flexiView.drag = { mode: 'rotate', id: rot.id, pointer: e.pointerId };
@@ -561,7 +555,9 @@ function flexiPointerDown(e) {
     if (near) {
       const s = f.prep.skel[near.k];
       const n = flexiSkelDir(f, near.k);
-      const c = { id: f.nextId++, P: [s.x, s.y], n, w: flexiSkelWidth(f, s.x, s.y, n), link: false, chain: -1 };
+      let chain = Math.max(-1, ...f.cuts.map((x) => x.chain)) + 1, bd = Infinity;
+      f.cuts.forEach((x) => { const d = Math.hypot(x.P[0] - s.x, x.P[1] - s.y); if (d < bd && d < 40) { bd = d; chain = x.chain; } });
+      const c = { id: f.nextId++, P: [s.x, s.y], n, w: flexiSkelWidth(f, s.x, s.y, n), chain };
       f.cuts.push(c);
       f.selected = c.id;
       f.edited = true;
@@ -601,9 +597,10 @@ function flexiPointerMove(e) {
       c.P = [mx, my];
     }
   } else {
+    // ручка — на конце черты (направление t = (−n.y, n.x))
     const tx = mx - c.P[0], ty = my - c.P[1];
     const l = Math.hypot(tx, ty);
-    if (l > 0.5) c.n = [tx / l, ty / l];
+    if (l > 0.5) c.n = [ty / l, -tx / l];
   }
   f.edited = true;
   flexiInvalidate();
@@ -643,50 +640,17 @@ function flexiAutoBtn() {
 
 /* ---------- Настройки на экране ---------- */
 
-function flexiSeg(id, value) {
-  document.querySelectorAll('#' + id + ' button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === value));
-}
-
 function flexiRenderSettings() {
   const f = state.flexi;
   if (!f) return;
-  const kit = f.mode === 'kit';
-  document.querySelectorAll('#flexi-mode button').forEach((b) => b.classList.toggle('is-active', b.dataset.mode === f.mode));
-  document.querySelectorAll('.flexi-pip').forEach((el2) => { el2.hidden = kit; });
-  document.querySelectorAll('.flexi-kit').forEach((el2) => { el2.hidden = !kit; });
-  $('flexi-mode-tip').textContent = FLEXI_MODE_TIP[f.mode];
-  $('flexi-hint').textContent = FLEXI_HINT[f.mode];
   $('flexi-length').value = String(f.length);
   $('flexi-length-val').textContent = f.length + ' мм';
   $('flexi-small').hidden = f.length >= 120;
-  $('flexi-cut').value = String(f.cut);
-  $('flexi-cut-val').textContent = cadMm(f.cut) + ' мм';
-  flexiSeg('flexi-gap', f.pip.g);
-  $('flexi-alpha').value = String(f.pip.alpha);
-  $('flexi-alpha-val').textContent = '±' + f.pip.alpha + '°';
-  flexiSeg('flexi-fit', f.kit.g);
-  flexiSeg('flexi-snap', f.kit.snap);
-  flexiSeg('flexi-plate', f.kit.plate);
-  const links = kit ? f.kit.links : f.pip.links;
-  $('flexi-links').checked = links;
-  $('flexi-links-warn').hidden = !(kit && links);
-  document.querySelectorAll('.flexi-links-opt').forEach((el2) => { el2.hidden = !links || (el2.classList.contains('flexi-pip') && kit); });
+  document.querySelectorAll('#flexi-gap button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === f.g));
   $('flexi-k').value = String(f.k);
   $('flexi-k-val').textContent = f.k.toFixed(1);
   $('flexi-aseg').value = String(f.alphaSeg);
   $('flexi-aseg-val').textContent = '±' + f.alphaSeg + '°';
-  flexiRenderSwing(f);
-}
-
-// 🧩 Сборная: поворот не задаётся, а получается из размеров — показываем «ходит ±N°».
-function flexiRenderSwing(f) {
-  if (!f || f.mode !== 'kit' || !f.core || !f.prep || !f.cuts.length) {
-    $('flexi-swing').textContent = f && f.mode === 'kit' ? 'Поворот считается сам из размеров сустава' : '';
-    return;
-  }
-  const a = f.cuts.map((c) => flexiDims(f, c).alpha);
-  const lo = Math.round(Math.min(...a)), hi = Math.round(Math.max(...a));
-  $('flexi-swing').textContent = 'Ходит ±' + (lo === hi ? lo : lo + '–' + hi) + '°';
 }
 
 function flexiOnLength() {
@@ -695,14 +659,6 @@ function flexiOnLength() {
   f.length = Number($('flexi-length').value);
   $('flexi-length-val').textContent = f.length + ' мм';
   $('flexi-small').hidden = f.length >= 120;
-  flexiSchedulePrepare();
-}
-
-function flexiOnCut() {
-  const f = state.flexi;
-  if (!f) return;
-  f.cut = Number($('flexi-cut').value);
-  $('flexi-cut-val').textContent = cadMm(f.cut) + ' мм';
   flexiSchedulePrepare();
 }
 
@@ -720,19 +676,19 @@ async function flexiBuild() {
   const f = state.flexi;
   if (!f || !f.prep || state.flexiBusy) return;
   if (!f.cuts.length) {
-    toast('Добавь хотя бы один сустав');
+    toast('Добавь хотя бы одно звено');
     return;
   }
   haptic();
   clearTimeout(f.prepTimer);
   state.flexiBusy = true;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Готовлю суставы…';
+  $('busy-text').textContent = 'Готовлю звенья…';
   let r;
   try {
     r = await flexiCall(f, {
       type: 'build', opts: flexiOpts(f),
-      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, link: c.link, chain: c.chain })),
+      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain })),
     });
   } catch (err) {
     state.flexiBusy = false;
@@ -749,9 +705,8 @@ async function flexiBuild() {
   if (state.flexi !== f) return;
 
   const errors = r.notes.filter((x) => x.level === 'error');
-  f.built = Object.assign(r, { mode: f.mode, errors, alphaByJoint: r.joints.map((J) => J.alpha) });
+  f.built = Object.assign(r, { errors });
   f.stale = false;
-  f.view = 'assembled';
   $('flexi-result').hidden = false;
   $('flexi-result-stale').hidden = true;
   flexiRenderResult(f);
@@ -778,20 +733,7 @@ function flexiRenderResult(f) {
   b.errors.forEach((x) => add('is-error', '✖ ' + x.text));
   b.notes.filter((x) => x.level === 'warn').forEach((x) => add('is-warn', '⚠ ' + x.text));
 
-  const chains = $('flexi-chains');
-  chains.textContent = '';
-  b.chains.forEach((c, i) => {
-    const name = b.chains.length === 1 ? 'Хвост' : 'Цепочка ' + (i + 1);
-    chains.appendChild(el('div', '', name + ': ' + c.count + ' ' + plural(c.count, 'звено', 'звена', 'звеньев') + ', гнётся до ±' + Math.round(c.bend) + '°'));
-  });
-
-  const size = b.mode === 'kit'
-    ? b.plates.reduce((s, p) => s + p.stl.byteLength, 0)
-    : b.stl.byteLength;
-  $('flexi-parts').textContent = 'Деталей: ' + b.parts.length + (b.mode === 'kit' ? ' · столов: ' + b.plates.length + ' по ' + f.kit.plate + ' мм' : '') +
-    ' · ' + cadMm(size / 1048576) + ' МБ';
-  $('flexi-view').hidden = b.mode !== 'kit';
-  document.querySelectorAll('#flexi-view button').forEach((x) => x.classList.toggle('is-active', x.dataset.view === f.view));
+  $('flexi-parts').textContent = 'Деталей: ' + b.parts.length + ' · звеньев: ' + b.joints.length + ' · ' + cadMm(b.stl.byteLength / 1048576) + ' МБ';
 }
 
 /* ---------- 3D-превью ---------- */
@@ -837,7 +779,7 @@ async function flexiShowPreview(f) {
     inner.position.set(-J.P[0], -J.P[1], 0);
     pivot.add(inner);
     parentHolder.add(pivot);
-    pivots.push({ pivot, alpha: J.alpha * Math.PI / 180, depth: depthOf(j), j });
+    pivots.push({ pivot, alpha: J.alpha * Math.PI / 180, depth: depthOf(j), chain: Math.max(0, J.chain) });
     holder[j] = inner;
     return inner;
   };
@@ -851,33 +793,6 @@ async function flexiShowPreview(f) {
     (p.joint >= 0 ? mkHolder(p.joint) : assembled).add(mesh);
   });
   scene.add(assembled);
-
-  // «Как на столе» (🧩 Сборная): столы рядом, квадрат каждого стола
-  let platesGroup = null;
-  if (b.mode === 'kit') {
-    platesGroup = new T.Group();
-    const size = f.kit.plate;
-    b.plates.forEach((pl, pi) => {
-      const ox = pi * (size + 30);
-      const sq = new T.GridHelper(size, 1, 0x888888, 0x888888);
-      sq.rotation.x = Math.PI / 2;
-      sq.position.set(ox + size / 2, size / 2, 0);
-      platesGroup.add(sq);
-      const grid = new T.GridHelper(size, size / 20, 0xcccccc, 0xcccccc);
-      grid.rotation.x = Math.PI / 2;
-      grid.position.set(ox + size / 2, size / 2, -0.05);
-      grid.material.transparent = true;
-      grid.material.opacity = 0.5;
-      platesGroup.add(grid);
-      pl.items.forEach((it) => {
-        const m = new T.Mesh(geoms[it.index], mats[it.index]);
-        m.position.set(ox + it.dx, it.dy, 0);
-        platesGroup.add(m);
-      });
-    });
-    platesGroup.visible = false;
-    scene.add(platesGroup);
-  }
 
   const center = new T.Vector3();
   const size = new T.Vector3();
@@ -912,18 +827,17 @@ async function flexiShowPreview(f) {
   }
   const loop = (now) => {
     flexiPrev.raf = requestAnimationFrame(loop);
-    if (flexiPrev.wiggle && assembled.visible) {
+    if (flexiPrev.wiggle) {
       const t = (now - flexiPrev.t0) / 1000;
-      // волна: дальние звенья отстают от ближних
-      pivots.forEach((p) => { p.pivot.rotation.z = Math.sin(t * 2.4 - p.depth * 0.7 + p.j * 0.4) * p.alpha; });
+      // волна: каждое звено качается на ±α, дальние от тела — со сдвигом фазы
+      pivots.forEach((p) => { p.pivot.rotation.z = Math.sin(t * 2.4 - p.depth * 0.8 + p.chain * 1.3) * p.alpha; });
     }
     controls.update();
     renderer.render(scene, camera);
   };
   flexiPrev.raf = requestAnimationFrame(loop);
-  flexiPrev.v = { T, renderer, scene, camera, controls, geoms, mats, pivots, center, radius, dist, assembled, platesGroup, box };
+  flexiPrev.v = { T, renderer, scene, camera, controls, geoms, mats, pivots, center, radius, dist, assembled, box };
   flexiSetWiggle(false);
-  flexiSetView(f, 'assembled');
 }
 
 function flexiGeometry(T, p) {
@@ -934,32 +848,6 @@ function flexiGeometry(T, p) {
   g.dispose();
   flat.computeVertexNormals();
   return flat;
-}
-
-function flexiSetView(f, view) {
-  const v = flexiPrev.v;
-  f.view = view;
-  document.querySelectorAll('#flexi-view button').forEach((x) => x.classList.toggle('is-active', x.dataset.view === view));
-  $('flexi-wiggle').hidden = view !== 'assembled'; // «Пошевелить» — только в собранной
-  if (!v) return;
-  const plates = view === 'plates' && v.platesGroup;
-  v.assembled.visible = !plates;
-  if (v.platesGroup) v.platesGroup.visible = !!plates;
-  if (plates) flexiSetWiggle(false);
-  // камера: на всё, что видно
-  const T = v.T;
-  const box = plates ? new T.Box3().setFromObject(v.platesGroup) : v.box;
-  const center = new T.Vector3(), size = new T.Vector3();
-  box.getCenter(center);
-  box.getSize(size);
-  const radius = Math.max(size.length() / 2, 1);
-  const dist = (radius / Math.sin((35 / 2) * Math.PI / 180)) * 1.05;
-  v.controls.target.copy(center);
-  v.camera.position.copy(center).add(new T.Vector3(plates ? 0.2 : 0.6, plates ? -0.6 : -1, plates ? 1.6 : 1.1).normalize().multiplyScalar(dist));
-  v.camera.far = radius * 100;
-  v.camera.updateProjectionMatrix();
-  v.controls.maxDistance = radius * 12;
-  v.controls.update();
 }
 
 function flexiSetWiggle(on) {
@@ -984,15 +872,12 @@ function flexiDestroyPreview() {
   v.renderer.domElement.remove();
 }
 
-// Снимок 800×800: «Собранная», вид 3/4 сверху, светлый фон, суставы в покое.
+// Снимок 800×800: вид 3/4 сверху, светлый фон, звенья в покое.
 function flexiSnapshot() {
   const v = flexiPrev.v;
   const r = v.renderer, cam = v.camera;
   const wasWiggle = flexiPrev.wiggle;
-  const wasPlates = v.platesGroup && v.platesGroup.visible;
   v.pivots.forEach((p) => { p.pivot.rotation.z = 0; });
-  v.assembled.visible = true;
-  if (v.platesGroup) v.platesGroup.visible = false;
   const savedPos = cam.position.clone(), savedAspect = cam.aspect, savedRatio = r.getPixelRatio();
   const stage = $('flexi-3d');
   r.setPixelRatio(1);
@@ -1011,10 +896,6 @@ function flexiSnapshot() {
   cam.position.copy(savedPos);
   cam.lookAt(v.controls.target);
   cam.updateProjectionMatrix();
-  if (wasPlates) {
-    v.assembled.visible = false;
-    v.platesGroup.visible = true;
-  }
   flexiPrev.wiggle = wasWiggle;
   return url;
 }
@@ -1052,33 +933,22 @@ async function flexiExport() {
     return;
   }
   haptic();
-  const b = f.built;
-  const files = b.mode === 'kit'
-    ? b.plates.map((p, i) => ({ bytes: p.stl, plate: (i + 1) + '/' + b.plates.length }))
-    : [{ bytes: b.stl }];
-  if (files.some((x) => x.bytes.byteLength > FLEXI_MAX_FILE)) {
+  const bytes = f.built.stl;
+  if (bytes.byteLength > FLEXI_MAX_FILE) {
     hapticNotify('error');
     alertBox('Модель слишком подробная для отправки (файл больше 12 МБ)');
     return;
   }
   state.flexiBusy = true;
   $('busy').hidden = false;
-  let snapshot;
-  try { snapshot = flexiSnapshot(); } catch (e) { snapshot = ''; }
-  let r = { status: 0, data: null };
-  for (let i = 0; i < files.length; i++) {
-    $('busy-text').textContent = files.length > 1 ? 'Отправляю стол ' + (i + 1) + ' из ' + files.length + '…' : 'Отправляю в чат…';
-    try {
-      const params = { a: 'flexi', id: f.id, file: await cadBlobToDataUrl(files[i].bytes), snapshot };
-      if (b.mode === 'kit') {
-        params.kit = '1';
-        params.plate = files[i].plate;
-      }
-      r = await cadPost(params, 120000); // столы — по очереди, ждём ответ на каждый
-    } catch (e) {
-      r = { status: 0, data: null };
-    }
-    if (!(r.data && r.data.ok === true)) break;
+  $('busy-text').textContent = 'Отправляю в чат…';
+  let r;
+  try {
+    let snapshot = '';
+    try { snapshot = flexiSnapshot(); } catch (e) { /* без снимка */ }
+    r = await cadPost({ a: 'flexi', id: f.id, file: await cadBlobToDataUrl(bytes), snapshot }, 120000);
+  } catch (e) {
+    r = { status: 0, data: null };
   }
   state.flexiBusy = false;
   $('busy').hidden = true;
@@ -1106,24 +976,13 @@ function bindFlexi() {
   $('flexi-add').addEventListener('click', flexiAddMode);
   $('flexi-auto').addEventListener('click', flexiAutoBtn);
   $('flexi-length').addEventListener('input', flexiOnLength);
-  $('flexi-cut').addEventListener('input', flexiOnCut);
 
   const withF = (fn) => (e) => { const f = state.flexi; if (f) fn(f, e); };
-  document.querySelectorAll('#flexi-mode button').forEach((b) => b.addEventListener('click', withF((f) => {
-    if (f.mode === b.dataset.mode) return;
+  document.querySelectorAll('#flexi-gap button').forEach((b) => b.addEventListener('click', withF((f) => {
     haptic();
-    f.mode = b.dataset.mode;
+    f.g = Number(b.dataset.v);
     flexiSettingChanged();
   })));
-  const seg = (id, apply) => document.querySelectorAll('#' + id + ' button').forEach((b) => b.addEventListener('click', withF((f) => {
-    haptic();
-    apply(f, Number(b.dataset.v));
-    flexiSettingChanged();
-  })));
-  seg('flexi-gap', (f, v) => { f.pip.g = v; });
-  seg('flexi-fit', (f, v) => { f.kit.g = v; });
-  seg('flexi-snap', (f, v) => { f.kit.snap = v; });
-  seg('flexi-plate', (f, v) => { f.kit.plate = v; flexiStore('grava.flexi.plate', String(v)); });
   let sliderTimer = 0;
   const slider = (id, apply) => $(id).addEventListener('input', withF((f) => {
     apply(f, Number($(id).value));
@@ -1133,21 +992,10 @@ function bindFlexi() {
     clearTimeout(sliderTimer);
     sliderTimer = setTimeout(() => { if (state.flexi === f && !f.edited) flexiAuto(f, false); }, 350);
   }));
-  slider('flexi-alpha', (f, v) => { f.pip.alpha = v; });
   slider('flexi-k', (f, v) => { f.k = v; });
   slider('flexi-aseg', (f, v) => { f.alphaSeg = v; });
-  $('flexi-links').addEventListener('change', withF((f) => {
-    haptic();
-    if (f.mode === 'kit') f.kit.links = $('flexi-links').checked;
-    else f.pip.links = $('flexi-links').checked;
-    flexiSettingChanged();
-  }));
 
   $('flexi-build').addEventListener('click', flexiBuild);
-  document.querySelectorAll('#flexi-view button').forEach((b) => b.addEventListener('click', withF((f) => {
-    haptic();
-    flexiSetView(f, b.dataset.view);
-  })));
   $('flexi-wiggle').addEventListener('click', () => {
     haptic();
     flexiSetWiggle(!flexiPrev.wiggle);
