@@ -4,10 +4,11 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=4';
-const FLEXI_CORE_URL = './flexi-core.js?v=4';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=5';
+const FLEXI_CORE_URL = './flexi-core.js?v=5';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
-const FLEXI_COLORS = [0xb8b8b8, 0x6fa8dc, 0xf6b26b, 0x93c47d, 0xe06666, 0x8e7cc3, 0xffd966, 0x76a5af, 0xc27ba0, 0xa2c4c9, 0xd5a6bd, 0xb6d7a8, 0xf9cb9c, 0x9fc5e8, 0xea9999];
+// сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
+const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
 const FLEXI_RED = '#e53935';
 let flexiCore = null;
 function flexiLoadCore() {
@@ -61,6 +62,7 @@ function openFlexi(id) {
   $('flexi-warn-pose').hidden = true;
   $('flexi-warn-parts').hidden = true;
   $('flexi-skipped').hidden = true;
+  $('flexi-thin').hidden = true;
   $('flexi-status').hidden = false;
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
@@ -311,6 +313,9 @@ async function flexiAuto(f, silent) {
   f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: true, br: c.br, s: c.s, root: c.root }));
   f.edited = false;
   $('flexi-skipped').hidden = true;
+  // места, где сустав не помещается внутри (тонкие лапки, кончик хвоста) — серые точки на виде сверху
+  f.thin = r.thin || [];
+  $('flexi-thin').hidden = !f.thin.length;
   f.selected = null;
   flexiInvalidate();
   if (!silent) flexiDraw();
@@ -409,6 +414,18 @@ function flexiDraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const g = f.prep.grid;
   ctx.drawImage(flexiView.img, flexiView.ox, flexiView.oy, g.W * flexiView.k, g.H * flexiView.k);
+
+  // серые точки — тут сустав внутри не помещается
+  (f.thin || []).forEach((q) => {
+    const [px, py] = flexiToScreen(q[0], q[1]);
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(142,142,147,0.9)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.stroke();
+  });
 
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2481cc';
   const red = (f.built && !f.stale && f.built.redIds) || [];
@@ -659,7 +676,7 @@ function flexiRenderSettings() {
   if (!f) return;
   $('flexi-length').value = String(f.length);
   $('flexi-length-val').textContent = f.length + ' мм';
-  $('flexi-small').hidden = f.length >= 120;
+  $('flexi-size').hidden = f.length >= 150;
   document.querySelectorAll('#flexi-gap button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === f.g));
   $('flexi-k').value = String(f.k);
   $('flexi-k-val').textContent = f.k.toFixed(1);
@@ -672,7 +689,7 @@ function flexiOnLength() {
   if (!f) return;
   f.length = Number($('flexi-length').value);
   $('flexi-length-val').textContent = f.length + ' мм';
-  $('flexi-small').hidden = f.length >= 120;
+  $('flexi-size').hidden = f.length >= 150;
   flexiSchedulePrepare();
 }
 
@@ -723,9 +740,12 @@ async function flexiBuild() {
   if (skipped.length) f.cuts = f.cuts.filter((c) => skipped.indexOf(c.id) === -1);
   f.cuts.forEach((c) => { const m = r.moved && r.moved[c.id]; if (m) Object.assign(c, m); });
   if (f.selected != null && !f.cuts.some((c) => c.id === f.selected)) f.selected = null;
+  const why = r.skipWhy || {};
+  const nThin = skipped.filter((id) => why[id] === 'thin').length, nCut = skipped.length - nThin;
+  const skLine = (n, tail) => n + ' ' + plural(n, 'звено', 'звена', 'звеньев') + ' пропущено — ' + tail;
   const sk = $('flexi-skipped');
   sk.hidden = !skipped.length;
-  sk.textContent = skipped.length + ' ' + plural(skipped.length, 'звено', 'звена', 'звеньев') + ' пропущено — там не режется';
+  sk.textContent = [nCut ? skLine(nCut, 'там не режется') : '', nThin ? skLine(nThin, 'тут тонко') : ''].filter(Boolean).join(' · ');
   const errors = r.notes.filter((x) => x.level === 'error');
   f.built = Object.assign(r, { errors });
   f.stale = false;
@@ -784,7 +804,8 @@ async function flexiShowPreview(f) {
 
   const b = f.built;
   const geoms = b.parts.map((p) => flexiGeometry(T, p));
-  const mats = b.parts.map((_, i) => new T.MeshStandardMaterial({ color: FLEXI_COLORS[i % FLEXI_COLORS.length], roughness: 0.8, metalness: 0 }));
+  const depthOfPart = (p) => { let d = 0; for (let x = p.joint; x >= 0; x = b.joints[x].parent) d++; return d; };
+  const mats = b.parts.map((p) => new T.MeshStandardMaterial({ color: FLEXI_COLORS[depthOfPart(p) % 2], roughness: 0.8, metalness: 0 }));
 
   // «Собранная»: иерархия суставов — лапа поворачивается вокруг вертикали через P вместе с вложенными звеньями
   const assembled = new T.Group();

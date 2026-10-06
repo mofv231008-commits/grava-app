@@ -2,11 +2,11 @@
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=4';
+} from './flexi-core.js?v=5';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
-let model = null;  // после масштаба, среза низа и починки
+let model = null;  // после масштаба, среза низа и починки — это и есть «кожа» (skin): её не режем, по ней обрезается сустав
 let mesh = null;
 let an = null;     // анализ вида сверху
 
@@ -57,7 +57,8 @@ self.onmessage = async (e) => {
       }, [heights.buffer, skeleton.buffer]);
     } else if (msg.type === 'auto') {
       if (!an) throw new FlexiError('no_model');
-      self.postMessage({ type: 'cuts', id: msg.id, cuts: autoCuts(an, msg.opts) });
+      const r = autoCuts(an, msg.opts);
+      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin });
     } else if (msg.type === 'build') {
       if (!model) throw new FlexiError('no_model');
       const opts = msg.opts;
@@ -88,7 +89,7 @@ self.onmessage = async (e) => {
       });
       self.postMessage({
         type: 'built', id: msg.id, parts, joints: res.joints, notes: res.notes, redIds: res.redIds,
-        skipped: res.skipped, moved: res.moved,
+        skipped: res.skipped, skipWhy: res.skipWhy, moved: res.moved,
         summary: res.summary, num: res.num, order: cuts.map((c) => c.id), stl,
         chains: Object.values(chains),
       }, transfer);

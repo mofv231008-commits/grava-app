@@ -918,7 +918,7 @@ body.no-tabbar .toast { bottom: calc(var(--safe-bottom) + 16px); }
 .flexi-settings .cad-list { margin-top: 0; border-radius: 0 0 var(--radius) var(--radius); }
 .flexi-settings .cad-param:first-child { border-top: 1px solid var(--bg); }
 .flexi-val { font-size: 14px; white-space: nowrap; }
-.flexi-small { margin-top: 6px; font-size: 13px; color: #c98a00; }
+.flexi-size { margin: 8px 4px 0; padding: 8px 12px; border-radius: 12px; font-size: 13px; background: rgba(255, 193, 7, .16); }
 .flexi-gap { flex-shrink: 0; }
 .flexi-gap button { min-width: 52px; min-height: 32px; font-size: 13px; }
 .flexi-build { margin-top: 14px; min-height: 48px; }
