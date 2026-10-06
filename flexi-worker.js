@@ -2,7 +2,7 @@
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=5';
+} from './flexi-core.js?v=6';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
@@ -58,7 +58,7 @@ self.onmessage = async (e) => {
     } else if (msg.type === 'auto') {
       if (!an) throw new FlexiError('no_model');
       const r = autoCuts(an, msg.opts);
-      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin });
+      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin, legs: r.legs });
     } else if (msg.type === 'build') {
       if (!model) throw new FlexiError('no_model');
       const opts = msg.opts;

@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=5';
-const FLEXI_CORE_URL = './flexi-core.js?v=5';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=6';
+const FLEXI_CORE_URL = './flexi-core.js?v=6';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -43,6 +43,7 @@ function openFlexi(id) {
     cut: 1,
     g: 0.45,
     k: 1.2,
+    kBody: 0.5, // звенья позвоночника внутри тела — короче (тело широкое)
     alphaSeg: 15,
     prep: null,
     cuts: [],
@@ -150,11 +151,13 @@ class FlexiUiError extends Error {
 
 // Опции для flexi-core: размеры звена и шаг цепочки.
 function flexiOpts(f) {
-  return { g: f.g, alphaSeg: f.alphaSeg, k: f.k };
+  return { g: f.g, alphaSeg: f.alphaSeg, k: f.k, kBody: f.kBody };
 }
 
+// на позвоночнике кулак не больше 4.5 мм — как в потоке
 function flexiDims(f, c) {
-  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]));
+  const o = c.spine ? Object.assign(flexiOpts(f), { rCap: f.core.SPINE_R }) : flexiOpts(f);
+  return f.core.jointDims(o, c.w, flexiZtop(f, c.P[0], c.P[1]));
 }
 
 // Верх модели в радиусе 3 мм — по картинке высот (точное значение считает поток при сборке).
@@ -310,11 +313,12 @@ async function flexiAuto(f, silent) {
   }
   if (state.flexi !== f || seq !== f.autoSeq) return;
   // auto — поставлен автопоиском: если не режется, сборщик сдвинет его или тихо пропустит
-  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: true, br: c.br, s: c.s, root: c.root }));
+  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: true, br: c.br, s: c.s, root: c.root, spine: c.spine }));
   f.edited = false;
   $('flexi-skipped').hidden = true;
   // места, где сустав не помещается внутри (тонкие лапки, кончик хвоста) — серые точки на виде сверху
   f.thin = r.thin || [];
+  f.legs = r.legs; // сколько лап у фигурки (со звеньями или цельных)
   $('flexi-thin').hidden = !f.thin.length;
   f.selected = null;
   flexiInvalidate();
@@ -490,6 +494,12 @@ function flexiChainInfo(f) {
   if (!f.cuts.length) return 'Звеньев нет — нажми «↺ Авто» или «＋ Звено»';
   const per = {};
   f.cuts.forEach((c) => { per[c.chain] = (per[c.chain] || 0) + 1; });
+  // позвоночник — цепочка, в которой есть звенья позвоночника; остальные цепочки — лапы
+  const sc = f.cuts.find((c) => c.spine);
+  if (sc) {
+    const ns = per[sc.chain], legs = f.legs != null ? f.legs : Object.keys(per).length - 1;
+    return 'Позвоночник: ' + ns + ' ' + plural(ns, 'звено', 'звена', 'звеньев') + ' · лапы: ' + legs + ' · гнётся до ±' + ns * f.alphaSeg + '°';
+  }
   const counts = Object.values(per);
   const longest = Math.max(...counts);
   const nb = counts.length, nl = f.cuts.length;
@@ -679,6 +689,8 @@ function flexiRenderSettings() {
   $('flexi-size').hidden = f.length >= 150;
   document.querySelectorAll('#flexi-gap button').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === f.g));
   $('flexi-k').value = String(f.k);
+  $('flexi-kb').value = String(f.kBody);
+  $('flexi-kb-val').textContent = f.kBody.toFixed(1);
   $('flexi-k-val').textContent = f.k.toFixed(1);
   $('flexi-aseg').value = String(f.alphaSeg);
   $('flexi-aseg-val').textContent = '±' + f.alphaSeg + '°';
@@ -719,7 +731,7 @@ async function flexiBuild() {
   try {
     r = await flexiCall(f, {
       type: 'build', opts: flexiOpts(f),
-      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: !!c.auto, br: c.br, s: c.s, root: c.root })),
+      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: !!c.auto, br: c.br, s: c.s, root: c.root, spine: c.spine })),
     });
   } catch (err) {
     state.flexiBusy = false;
@@ -822,7 +834,7 @@ async function flexiShowPreview(f) {
     inner.position.set(-J.P[0], -J.P[1], 0);
     pivot.add(inner);
     parentHolder.add(pivot);
-    pivots.push({ pivot, alpha: J.alpha * Math.PI / 180, depth: depthOf(j), chain: Math.max(0, J.chain) });
+    pivots.push({ pivot, alpha: J.alpha * Math.PI / 180, depth: depthOf(j), chain: Math.max(0, J.chain), spine: !!J.spine, s: J.s || 0 });
     holder[j] = inner;
     return inner;
   };
@@ -873,7 +885,8 @@ async function flexiShowPreview(f) {
     if (flexiPrev.wiggle) {
       const t = (now - flexiPrev.t0) / 1000;
       // волна: каждое звено качается на ±α, дальние от тела — со сдвигом фазы
-      pivots.forEach((p) => { p.pivot.rotation.z = Math.sin(t * 2.4 - p.depth * 0.8 + p.chain * 1.3) * p.alpha; });
+      // позвоночник — волна от головы к хвосту (по месту звена вдоль позвоночника), лапы — от тела к кончикам
+      pivots.forEach((p) => { p.pivot.rotation.z = Math.sin(t * 2.4 - (p.spine ? p.s * 0.06 : p.depth * 0.8 + p.chain * 1.3)) * p.alpha; });
     }
     controls.update();
     renderer.render(scene, camera);
@@ -1036,6 +1049,7 @@ function bindFlexi() {
     sliderTimer = setTimeout(() => { if (state.flexi === f && !f.edited) flexiAuto(f, false); }, 350);
   }));
   slider('flexi-k', (f, v) => { f.k = v; });
+  slider('flexi-kb', (f, v) => { f.kBody = v; });
   slider('flexi-aseg', (f, v) => { f.alphaSeg = v; });
 
   $('flexi-build').addEventListener('click', flexiBuild);

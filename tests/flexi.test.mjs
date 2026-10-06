@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Module from '../vendor/manifold/manifold.js';
 import {
-  parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf,
+  parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, verticalSpan,
 } from '../flexi-core.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +68,13 @@ function octopus() {
   }
   return finish(ps);
 }
+// Кот лёжа: тело, голова, 4 лапы и хвост
+function cat() {
+  const ps = [ell([40, 14, 11], [0, 0, 10]), ell([13, 12, 11], [50, 0, 10])];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) ps.push(capsule(5, [sx * 25, sy * 10, 5], [sx * 30, sy * 32, 5]));
+  ps.push(capsule(5, [-40, 0, 6], [-95, 0, 5]));
+  return finish(ps);
+}
 function snake() {
   // S-образная кривая, r=6, длина ~160 мм, плюс голова-эллипсоид
   const ps = [ell([18, 14, 9], [0, 0, 8])];
@@ -118,13 +125,9 @@ function run(name, stl, expect) {
 
   ok('после починки — одна деталь', rep.parts === 1, rep.parts);
   if (expect.noLinks) {
-    // кости тоньше любого сустава: звеньев нет, все места отмечены серым, фигурка — одна цельная деталь
-    ok('звеньев нет — сустав не прячется', cuts.length === 0 && res.parts.length === 1, cuts.length);
+    // кости тоньше любого сустава: на лапах звеньев нет, все места отмечены серым; режется только тело
+    ok('на тонких костях звеньев нет (только позвоночник)', cuts.every((c) => c.spine), cuts.filter((c) => !c.spine).length);
     ok('тонкие места отмечены (серые точки)', found.thin.length >= expect.noLinks, found.thin.length);
-    res.parts.forEach((p) => p.manifold.delete());
-    model.delete();
-    base.manifold.delete();
-    return res;
   }
   if (expect.classify) expect.classify(cuts, an, length / base.length, rep, found);
   const errors = res.notes.filter((x) => x.level === 'error');
@@ -157,6 +160,10 @@ function run(name, stl, expect) {
     out.delete();
     U.delete();
   }
+  // точки модели (как она построена) → после «масштаб, центр в (0,0), срез низа 1 мм»
+  const b0 = base.manifold.boundingBox(), sc = length / base.length;
+  const T = (x, y, z) => [(x - (b0.min[0] + b0.max[0]) / 2) * sc, (y - (b0.min[1] + b0.max[1]) / 2) * sc, (z - b0.min[2]) * sc - 1];
+  if (expect.after) expect.after(res, an, T);
   const vols = res.parts.map((p) => p.manifold.volume());
   ok('нет деталей меньше 20 мм³', vols.every((v) => v >= 20), 'мин. ' + Math.min(...vols).toFixed(0) + ' мм³');
   ok('деталей = звеньев + 1', res.parts.length === res.joints.length + 1, [res.parts.length, res.joints.length]);
@@ -182,23 +189,49 @@ const perChain = (cuts) => {
   });
   return [...m.values()];
 };
+// Лапы — цепочки не позвоночника (сбоку от оси тела), хвост — звенья позвоночника позади тела.
 const animal = (minTail) => (cuts, an, s) => {
   const [cx] = an.core;
-  const legs = {}, tails = [];
-  perChain(cuts).forEach(({ first: c, n }) => {
+  const legs = {};
+  perChain(cuts.filter((c) => !c.spine)).forEach(({ first: c, n }) => {
     if (Math.abs(c.P[1]) > 9 * s && Math.abs(c.P[1]) > Math.abs(c.P[0] - cx) * 0.35) {
       const side = (c.P[0] > cx ? 'перед' : 'зад') + (c.P[1] > 0 ? '-левая' : '-правая');
       legs[side] = (legs[side] || 0) + n;
-    } else if (c.P[0] < cx - 10 && Math.abs(c.P[1]) < 9 * s) tails.push(n);
+    }
   });
+  // хвост — звенья позвоночника позади задних лап
+  const rear = cuts.filter((c) => !c.spine && c.root && c.P[0] < cx).map((c) => c.P[0]);
+  const hip = rear.length ? Math.min(...rear) : cx - 30 * s;
+  const tail = cuts.filter((c) => c.spine && c.P[0] < hip - 3);
   ok('на каждой из 4 лап ≥ 1 звено', Object.keys(legs).length === 4 && Object.values(legs).every((n) => n >= 1), legs);
-  ok(`на хвосте ≥ ${minTail} звен${minTail === 1 ? 'о' : 'а'}`, tails.length >= 1 && Math.max(...tails) >= minTail, tails);
+  ok(`на хвосте ≥ ${minTail} звен${minTail === 1 ? 'о' : 'а'}`, tail.length >= minTail, tail.map((c) => c.P[0].toFixed(1)));
+  ok('позвоночник режет и тело', cuts.some((c) => c.spine && Math.abs(c.P[0] - cx) < 25 * s), cuts.filter((c) => c.spine).map((c) => c.P[0].toFixed(1)));
 };
 const arms = (cuts) => {
   const list = perChain(cuts).map((x) => x.n);
   ok('8 щупалец, на каждом ≥ 4 звена', list.length === 8 && list.every((n) => n >= 4), list);
 };
 const snakeCheck = (cuts) => ok('у змеи ≥ 8 звеньев', cuts.length >= 8, cuts.length);
+
+// Лапы по анализу: ветвь, выходящая из тела не по позвоночнику; корень — точка позвоночника напротив выхода,
+// середина — 5 мм за выходом, кончик — 2 мм до конца ветви (z — середина кожи в точке).
+function legsFromAnalysis(an, mesh) {
+  const sp = an.branches[0];
+  const zAt = (p) => { const v = verticalSpan(mesh, p[0], p[1]); return v ? [p[0], p[1], (v.zb + v.zt) / 2] : null; };
+  const legs = [];
+  an.branches.slice(1).forEach((br) => {
+    if (br.ex < 0) return;
+    const ex = br.pts[br.ex];
+    if (sp.pts.some((q) => Math.hypot(q[0] - ex[0], q[1] - ex[1]) < 1.5)) return;
+    if (legs.some((l) => Math.hypot(l.ex[0] - ex[0], l.ex[1] - ex[1]) < 6)) return;
+    let kb = 0, bd = Infinity;
+    sp.pts.forEach((q, k) => { const d = (q[0] - ex[0]) ** 2 + (q[1] - ex[1]) ** 2; if (d < bd) { bd = d; kb = k; } });
+    const at = (s) => { let k = 0; while (k < br.cum.length - 1 && br.cum[k] < s) k++; return br.pts[k]; };
+    const root = zAt(sp.pts[kb]), mid = zAt(at(br.cum[br.ex] + 5)), tip = zAt(at(br.cum[br.cum.length - 1] - 2));
+    if (root && mid && tip) legs.push({ name: `(${ex[0].toFixed(0)},${ex[1].toFixed(0)})`, ex, root, mid, tip });
+  });
+  return legs;
+}
 
 // Эублефар лежит вдоль Y: голова −Y, хвост +Y. Шея и спина — до задних лап, дальше хвост.
 // Лапы тонкие — сустав в них не прячется, звеньев там может не быть.
@@ -207,16 +240,49 @@ const gecko = (cuts, an) => {
   const exits = an.branches.filter((br) => br.ex >= 0).map((br) => br.pts[br.ex]).filter((p) => Math.abs(p[0]) > 9 && p[1] > 0);
   const hip = exits.length ? Math.max(...exits.map((p) => p[1])) : 0;
   const back = spine.filter((c) => c.P[1] <= hip), tail = spine.filter((c) => c.P[1] > hip);
-  ok('на шее и спине ≥ 3 звена', back.length >= 3, back.map((c) => c.P[1].toFixed(1)));
+  ok('на теле (шея и спина) ≥ 3 звена', back.length >= 3, back.map((c) => c.P[1].toFixed(1)));
   ok('на хвосте ≥ 2 звена', tail.length >= 2, tail.map((c) => c.P[1].toFixed(1)));
+};
+
+// Деталь, в которой лежит точка (кубик 0.2 мм).
+const partAt = (parts, x, y, z) => parts.findIndex((p) => {
+  const c = Manifold.cube([0.2, 0.2, 0.2], true);
+  const t = c.translate([x, y, z]);
+  const v = inter(p.manifold, t);
+  c.delete(); t.delete();
+  return v > 0;
+});
+// Лапа целиком на своём звене позвоночника: середина и кончик лапы — в той же детали, что тело над её основанием,
+// и эта деталь — не голова (корень). Передние на одном («грудном»), задние на другом («тазовом»).
+function legsOnLinks(res, legs, T = (x, y, z) => [x, y, z]) {
+  const where = legs.map(({ name, root, mid, tip }) => ({ name, body: partAt(res.parts, ...T(...root)), mid: partAt(res.parts, ...T(...mid)), tip: partAt(res.parts, ...T(...tip)) }));
+  const whole = where.every((x) => x.body >= 0 && x.mid === x.body && x.tip === x.body && res.parts[x.body].joint >= 0);
+  ok('лапы целиком на звеньях позвоночника', whole, where.map((x) => `${x.name}: ${x.body}/${x.mid}/${x.tip}`).join(', '));
+  return where;
+}
+// кот: голова +X (x ≈ 37…63 в модели), хвост −X; после центровки x сдвинут на +18.5
+const catCheck = (cuts) => {
+  const X = (c) => c.P[0] - 18.5; // назад в координаты модели
+  const spine = cuts.filter((c) => c.spine);
+  const between = spine.filter((c) => X(c) > -40 && X(c) < 40);
+  ok('≥ 5 звеньев на позвоночнике между головой и хвостом (включая тело)', spine.filter((c) => X(c) > -95 && X(c) < 40).length >= 5,
+    spine.map((c) => X(c).toFixed(1)).join(' '));
+  ok('позвоночник режет и тело (≥ 3 звена внутри тела)', between.length >= 3, between.map((c) => X(c).toFixed(1)).join(' '));
+};
+const catLegs = (res, an, T) => {
+  const legs = [];
+  for (const sx of [1, -1]) for (const sy of [1, -1]) legs.push({ name: (sx > 0 ? 'перед' : 'зад') + (sy > 0 ? '-лев' : '-прав'), root: [sx * 25, sy * 6, 9], mid: [sx * 27.5, sy * 21, 4], tip: [sx * 29.5, sy * 30, 4] });
+  const w = legsOnLinks(res, legs, T);
+  ok('передние на одном звене, задние на другом', w[0].body === w[1].body && w[2].body === w[3].body && w[0].body !== w[2].body, w.map((x) => x.body));
 };
 
 const MODELS = {
   // у осьминога щупальца тонкие: при 189 мм спрятанный сустав влезает только у основания — проверяем на 250 мм
   octopus: () => ({ m: octopus(), expect: { classify: arms, length: 250, maxMs: 45000 } }),
+  cat: () => ({ m: cat(), expect: { classify: catCheck, after: catLegs, maxMs: 45000 } }),
   snake: () => ({ m: snake().m, expect: { classify: snakeCheck, maxMs: 30000 } }),
   lizard: () => ({ m: lizard(), expect: { classify: animal(3), maxMs: 30000 } }),
-  // кости скелета (полуширина ~2 мм) тоньше любого спрятанного сустава: звеньев нет, 4 лапы и хвост — серым
+  // кости скелета (полуширина ~2 мм) тоньше любого спрятанного сустава: на них звеньев нет, 4 лапы и хвост — серым
   skeleton: () => ({ m: skeleton(), expect: { noLinks: 5, maxMs: 30000 } }),
 };
 
@@ -230,7 +296,9 @@ for (const [name, mk] of Object.entries(MODELS)) {
   run(name, stl, expect);
 }
 // настоящие модели от бота из tests/: геккон — со своими проверками, остальные — общими
-const REAL = { gecko: { length: 150, classify: gecko, maxMs: 45000 } };
+// у эублефара лапы тонкие (звеньев на них нет), но каждая — целиком на своём звене позвоночника
+const geckoLegs = (res, an) => legsOnLinks(res, legsFromAnalysis(an, an.mesh));
+const REAL = { gecko: { length: 150, classify: gecko, after: geckoLegs, maxMs: 45000 } };
 for (const f of fs.readdirSync(HERE).filter((x) => /\.stl$/i.test(x))) {
   const name = f.replace(/\.stl$/i, '');
   if (ONLY && !ONLY.includes(name) && !ONLY.includes(f)) continue;
