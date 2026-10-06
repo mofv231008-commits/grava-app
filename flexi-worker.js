@@ -1,12 +1,12 @@
 /* Грава — фоновый поток сборщика шарниров «⛓ Цепочка» (manifold-3d, WebAssembly). */
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
-  parseSTL, writeSTL, loadModel, placeModel, analyze, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=3';
+  parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
+} from './flexi-core.js?v=4';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
-let model = null;  // после масштаба и среза низа
+let model = null;  // после масштаба, среза низа и починки
 let mesh = null;
 let an = null;     // анализ вида сверху
 
@@ -31,12 +31,20 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'loaded', id: msg.id, length: r.length, tris: soup.length / 9 });
     } else if (msg.type === 'prepare') {
       if (!base) throw new FlexiError('no_model');
-      if (model) model.delete();
-      model = placeModel(wasm, base, msg.length, msg.cut);
+      if (model) { model.delete(); model = null; }
+      const placed = placeModel(wasm, base, msg.length, msg.cut);
+      if (placed.isEmpty()) { placed.delete(); throw new FlexiError('empty'); }
+      // шаг 0: перепаять — щели и самопересечения заплавляются, лишние куски выбрасываются
+      self.postMessage({ type: 'progress', id: msg.id, phase: 'repair' });
+      const rep = repairModel(wasm, placed);
+      placed.delete();
+      model = rep.manifold;
       if (model.isEmpty()) throw new FlexiError('empty');
+      self.postMessage({ type: 'progress', id: msg.id, phase: 'analyze' });
       mesh = meshOf(model);
       const bb = model.boundingBox();
       an = analyze(mesh, bb);
+      attachGrooves(an, rep);
       // скелет для экрана: x, y, dt, родитель, расстояние от ядра
       const skeleton = new Float32Array(an.skeleton.length * 5);
       an.skeleton.forEach((s, k) => {
@@ -45,7 +53,7 @@ self.onmessage = async (e) => {
       const heights = an.heights.slice();
       self.postMessage({
         type: 'prepared', id: msg.id, grid: an.grid, heights, skeleton, zMax: an.zMax,
-        core: an.core, bbox: { min: bb.min, max: bb.max }, length: msg.length,
+        core: an.core, bbox: { min: bb.min, max: bb.max }, length: msg.length, parts: rep.parts,
       }, [heights.buffer, skeleton.buffer]);
     } else if (msg.type === 'auto') {
       if (!an) throw new FlexiError('no_model');
@@ -80,6 +88,7 @@ self.onmessage = async (e) => {
       });
       self.postMessage({
         type: 'built', id: msg.id, parts, joints: res.joints, notes: res.notes, redIds: res.redIds,
+        skipped: res.skipped, moved: res.moved,
         summary: res.summary, num: res.num, order: cuts.map((c) => c.id), stl,
         chains: Object.values(chains),
       }, transfer);

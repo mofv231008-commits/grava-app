@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=3';
-const FLEXI_CORE_URL = './flexi-core.js?v=3';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=4';
+const FLEXI_CORE_URL = './flexi-core.js?v=4';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 const FLEXI_COLORS = [0xb8b8b8, 0x6fa8dc, 0xf6b26b, 0x93c47d, 0xe06666, 0x8e7cc3, 0xffd966, 0x76a5af, 0xc27ba0, 0xa2c4c9, 0xd5a6bd, 0xb6d7a8, 0xf9cb9c, 0x9fc5e8, 0xea9999];
 const FLEXI_RED = '#e53935';
@@ -59,6 +59,8 @@ function openFlexi(id) {
   $('flexi-main').hidden = false;
   $('flexi-title').textContent = 'Загружаю модель…';
   $('flexi-warn-pose').hidden = true;
+  $('flexi-warn-parts').hidden = true;
+  $('flexi-skipped').hidden = true;
   $('flexi-status').hidden = false;
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
@@ -174,6 +176,10 @@ function flexiWorker(f) {
   try { w = new Worker(FLEXI_WORKER_URL, { type: 'module' }); } catch (e) { throw new FlexiUiError('worker'); }
   w.onmessage = (e) => {
     const msg = e.data || {};
+    if (msg.type === 'progress' && (msg.phase === 'repair' || msg.phase === 'analyze')) {
+      $('flexi-status-text').textContent = msg.phase === 'repair' ? 'Чиню модель…' : 'Ищу суставы…';
+      return;
+    }
     if (msg.type === 'progress') {
       $('busy-text').textContent = msg.phase === 'check'
         ? 'Проверяю звенья… ' + msg.k + ' из ' + msg.n
@@ -273,6 +279,10 @@ async function flexiPrepare(f, first) {
   r.skel = [];
   for (let k = 0; k < sk.length / 5; k++) r.skel.push({ x: sk[k * 5], y: sk[k * 5 + 1], dt: sk[k * 5 + 2], parent: sk[k * 5 + 3], dist: sk[k * 5 + 4] });
   f.prep = r;
+  // после починки остались крупные отдельные куски — они не соединены с телом
+  const warnParts = $('flexi-warn-parts');
+  warnParts.hidden = !(r.parts > 1);
+  if (r.parts > 1) warnParts.textContent = 'Модель из ' + r.parts + ' ' + plural(r.parts, 'части', 'частей', 'частей') + ' — куски, не связанные с телом, останутся отдельными';
   if (f.edited && oldLen && r.length !== oldLen) {
     const k = r.length / oldLen; // модель отцентрована в (0,0) — разрезы масштабируются вместе с ней
     f.cuts.forEach((c) => { c.P = [c.P[0] * k, c.P[1] * k]; c.w *= k; });
@@ -297,8 +307,10 @@ async function flexiAuto(f, silent) {
     return;
   }
   if (state.flexi !== f || seq !== f.autoSeq) return;
-  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain }));
+  // auto — поставлен автопоиском: если не режется, сборщик сдвинет его или тихо пропустит
+  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: true, br: c.br, s: c.s, root: c.root }));
   f.edited = false;
+  $('flexi-skipped').hidden = true;
   f.selected = null;
   flexiInvalidate();
   if (!silent) flexiDraw();
@@ -596,11 +608,13 @@ function flexiPointerMove(e) {
     } else {
       c.P = [mx, my];
     }
+    c.auto = false; // сдвинули рукой — теперь ошибки по нему показываем
   } else {
     // ручка — на конце черты (направление t = (−n.y, n.x))
     const tx = mx - c.P[0], ty = my - c.P[1];
     const l = Math.hypot(tx, ty);
     if (l > 0.5) c.n = [ty / l, -tx / l];
+    c.auto = false;
   }
   f.edited = true;
   flexiInvalidate();
@@ -688,7 +702,7 @@ async function flexiBuild() {
   try {
     r = await flexiCall(f, {
       type: 'build', opts: flexiOpts(f),
-      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain })),
+      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: !!c.auto, br: c.br, s: c.s, root: c.root })),
     });
   } catch (err) {
     state.flexiBusy = false;
@@ -704,6 +718,14 @@ async function flexiBuild() {
   $('busy').hidden = true;
   if (state.flexi !== f) return;
 
+  // автоматические разрезы, которые так и не разрезались, убираем (соседние звенья сливаются), сдвинутые — переставляем
+  const skipped = r.skipped || [];
+  if (skipped.length) f.cuts = f.cuts.filter((c) => skipped.indexOf(c.id) === -1);
+  f.cuts.forEach((c) => { const m = r.moved && r.moved[c.id]; if (m) Object.assign(c, m); });
+  if (f.selected != null && !f.cuts.some((c) => c.id === f.selected)) f.selected = null;
+  const sk = $('flexi-skipped');
+  sk.hidden = !skipped.length;
+  sk.textContent = skipped.length + ' ' + plural(skipped.length, 'звено', 'звена', 'звеньев') + ' пропущено — там не режется';
   const errors = r.notes.filter((x) => x.level === 'error');
   f.built = Object.assign(r, { errors });
   f.stale = false;

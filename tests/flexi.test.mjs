@@ -1,13 +1,15 @@
 // Тесты сборщика шарниров — тот же код, что в фоновом потоке телефона.
 // Режим один — «⛓ Цепочка»: каждая ветвь режется на звенья.
-// Запуск: node tests/flexi.test.mjs [only=lizard,skeleton,octopus,snake]
-// Итоговые STL — в tests/out/ (не в git). Если в tests/ лежат другие *.stl (модели от бота) — прогоняются тоже.
+// Как в телефоне: масштаб → срез низа → шаг 0 «перепаять» → автопоиск (по бороздкам) → сборка.
+// Запуск: node tests/flexi.test.mjs [only=lizard,skeleton,octopus,snake,gecko]
+// Итоговые STL — в tests/out/<имя>_chain.stl (не в git). tests/gecko.stl — настоящая модель от бота (геккон с бороздками);
+// другие *.stl, если положить в tests/, прогоняются тоже.
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Module from '../vendor/manifold/manifold.js';
 import {
-  parseSTL, writeSTL, loadModel, placeModel, analyze, autoCuts, orderCuts, buildJoints, meshOf,
+  parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf,
 } from '../flexi-core.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,20 +95,27 @@ function run(name, stl, expect) {
   const opts = { g: 0.45, alphaSeg: 15, k: 1.2 };
   const t0 = performance.now();
   const base = loadModel(wasm, parseSTL(stl));
-  const length = Math.max(150, base.length);
+  const length = expect.length || Math.max(150, base.length);
   const placed = placeModel(wasm, base.manifold, length, 1);
-  const mesh = meshOf(placed);
-  const an = analyze(mesh, placed.boundingBox());
-  const cuts = orderCuts(autoCuts(an, opts).map((c, i) => ({ ...c, id: i + 1 })), an.skeleton);
-  const res = buildJoints(wasm, placed, mesh, an, cuts, opts);
+  const rep = repairModel(wasm, placed);
+  placed.delete();
+  const model = rep.manifold;
+  const tRep = performance.now();
+  const mesh = meshOf(model);
+  const an = analyze(mesh, model.boundingBox());
+  attachGrooves(an, rep);
+  const auto = orderCuts(autoCuts(an, opts).map((c, i) => ({ ...c, id: i + 1 })), an.skeleton);
+  const res = buildJoints(wasm, model, mesh, an, auto, opts);
+  const cuts = auto.filter((c) => !res.skipped.includes(c.id)); // пропущенные экран убирает
   const t1 = performance.now();
 
   const chains = new Set(cuts.map((c) => c.chain)).size;
-  console.log(`\n${name} — длина ${length.toFixed(0)} мм, ветвей ${chains}, разрезов ${cuts.length}, звеньев ${res.joints.length}, деталей ${res.parts.length}, ${Math.round(t1 - t0)} мс`);
-  console.log('  ' + res.summary);
+  console.log(`\n${name} — длина ${length.toFixed(0)} мм, ветвей ${chains}, разрезов ${cuts.length}, звеньев ${res.joints.length}, деталей ${res.parts.length}, ${Math.round(t1 - t0)} мс (починка ${Math.round(tRep - t0)})`);
+  console.log('  ' + res.summary + (res.skipped.length ? ` · пропущено автоматических: ${res.skipped.length}` : ''));
   res.notes.forEach((x) => console.log('   ' + (x.level === 'error' ? '✖ ' : '⚠ ') + x.text));
 
-  if (expect.classify) expect.classify(cuts, an, length / base.length);
+  ok('после починки — одна деталь', rep.parts === 1, rep.parts);
+  if (expect.classify) expect.classify(cuts, an, length / base.length, rep);
   const errors = res.notes.filter((x) => x.level === 'error');
   const warns = res.notes.filter((x) => x.level === 'warn');
   ok('ни одной красной ошибки', errors.length === 0, errors.map((x) => x.text));
@@ -126,12 +135,12 @@ function run(name, stl, expect) {
   ok(`сборка быстрее ${expect.maxMs / 1000} с`, t1 - t0 < expect.maxMs, Math.round(t1 - t0) + ' мс');
 
   const file = writeSTL(res.parts.map((p) => meshOf(p.manifold)));
-  fs.writeFileSync(path.join(OUT, name + '-chain.stl'), Buffer.from(file));
+  fs.writeFileSync(path.join(OUT, name + '_chain.stl'), Buffer.from(file));
   const back = parseSTL(file);
   ok('STL открывается заново и меньше 12 МБ', back.length / 9 === new DataView(file).getUint32(80, true) && file.byteLength < 12 * 1048576,
     (file.byteLength / 1048576).toFixed(2) + ' МБ');
   res.parts.forEach((p) => p.manifold.delete());
-  placed.delete();
+  model.delete();
   base.manifold.delete();
   return res;
 }
@@ -163,6 +172,52 @@ const arms = (cuts) => {
 };
 const snakeCheck = (cuts) => ok('у змеи ≥ 8 звеньев', cuts.length >= 8, cuts.length);
 
+// Площадь сечения (заполненные воксели после починки) в срезе толщиной 2a поперёк разреза, полуширина w + 1.
+function areaAt(rep, P, n, w, a = 0.15) {
+  const g = rep.grid, { nx, ny, nz, v } = g;
+  const L = w + 1, R = Math.hypot(L, a) + v;
+  const i0 = Math.max(0, Math.floor((P[0] - R - g.x0) / v)), i1 = Math.min(nx - 1, Math.ceil((P[0] + R - g.x0) / v));
+  const j0 = Math.max(0, Math.floor((P[1] - R - g.y0) / v)), j1 = Math.min(ny - 1, Math.ceil((P[1] + R - g.y0) / v));
+  let f = 0;
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const dx = g.x0 + (i + 0.5) * v - P[0], dy = g.y0 + (j + 0.5) * v - P[1];
+      if (Math.abs(dx * n[0] + dy * n[1]) > a || Math.abs(-dx * n[1] + dy * n[0]) > L) continue;
+      for (let z = 0; z < nz; z++) f += rep.filled[(z * ny + j) * nx + i];
+    }
+  }
+  return f;
+}
+// Провал сечения в точке разреза: насколько оно меньше, чем в 1–2 мм по обе стороны (бороздка ≥ 0.25).
+function dipAt(rep, c, off = 0) {
+  const P = [c.P[0] + c.n[0] * off, c.P[1] + c.n[1] * off];
+  const side = (sg) => Math.max(...[1, 1.3, 1.6, 2].map((d) => areaAt(rep, [P[0] + sg * c.n[0] * d, P[1] + sg * c.n[1] * d], c.n, c.w)));
+  return 1 - areaAt(rep, P, c.n, c.w) / Math.min(side(1), side(-1));
+}
+
+// Геккон лежит вдоль Y: голова −Y, хвост +Y. На теле бороздки (поперёк спины) — звенья должны лечь в них.
+const gecko = (cuts, an, s, rep) => {
+  const legs = {}, spine = [];
+  perChain(cuts).forEach(({ first: c, n }) => {
+    if (Math.abs(c.P[0]) > 9) {
+      const side = (c.P[1] < 0 ? 'перед' : 'зад') + (c.P[0] < 0 ? '-левая' : '-правая');
+      legs[side] = (legs[side] || 0) + n;
+    }
+  });
+  cuts.forEach((c) => { if (Math.abs(c.P[0]) <= 9) spine.push(c); });
+  ok('на каждой из 4 лап ≥ 1 звено', Object.keys(legs).length === 4 && Object.values(legs).every((n) => n >= 1), legs);
+  const hip = Math.max(...cuts.filter((c) => Math.abs(c.P[0]) > 9 && c.P[1] > 0).map((c) => c.P[1]));
+  const tail = spine.filter((c) => c.P[1] > hip);
+  ok('на хвосте (за задними лапами) ≥ 3 звена', tail.length >= 3, tail.map((c) => c.P[1].toFixed(1)));
+  const body = spine.filter((c) => c.P[1] <= hip + 10);
+  ok('на теле есть звенья (шея и спина)', body.length >= 2, body.map((c) => c.P[1].toFixed(1)));
+  // звено в бороздке: сечение поперёк разреза заметно провалено (в 4–6 мм от бороздки провала нет)
+  const pct = (x) => '−' + Math.max(0, Math.round(x * 100)) + '%';
+  const rows = spine.map((c) => ({ y: c.P[1].toFixed(1), dip: dipAt(rep, c), off: Math.max(dipAt(rep, c, -5), dipAt(rep, c, 5)) }));
+  ok('звенья тела и хвоста — в бороздках', rows.length > 0 && rows.every((r) => r.dip >= 0.25),
+    rows.map((r) => `y=${r.y}: ${pct(r.dip)} (в 5 мм: ${pct(r.off)})${r.dip >= 0.25 ? '' : ' ✘'}`).join(', '));
+};
+
 const MODELS = {
   octopus: () => ({ m: octopus(), expect: { classify: arms, maxMs: 30000 } }),
   snake: () => ({ m: snake().m, expect: { classify: snakeCheck, maxMs: 30000 } }),
@@ -179,12 +234,14 @@ for (const [name, mk] of Object.entries(MODELS)) {
   fs.writeFileSync(path.join(OUT, name + '.stl'), Buffer.from(stl));
   run(name, stl, expect);
 }
-// настоящие модели от бота, если положили в tests/
+// настоящие модели от бота из tests/: геккон — со своими проверками, остальные — общими
+const REAL = { gecko: { length: 120, classify: gecko, maxMs: 30000 } };
 for (const f of fs.readdirSync(HERE).filter((x) => /\.stl$/i.test(x))) {
-  if (ONLY && !ONLY.includes(f)) continue;
+  const name = f.replace(/\.stl$/i, '');
+  if (ONLY && !ONLY.includes(name) && !ONLY.includes(f)) continue;
   const stl = fs.readFileSync(path.join(HERE, f));
   const buf = stl.buffer.slice(stl.byteOffset, stl.byteOffset + stl.byteLength);
-  run(f.replace(/\.stl$/i, ''), buf, { maxMs: 60000 });
+  run(name, buf, REAL[name] || { maxMs: 60000 });
 }
 console.log(`\n${failed ? '✘ провалено проверок: ' + failed : '✔ все проверки прошли'} · ${Math.round(performance.now() - T0)} мс · STL — в tests/out/`);
 process.exitCode = failed ? 1 : 0;

@@ -940,5 +940,6 @@ body.no-tabbar .toast { bottom: calc(var(--safe-bottom) + 16px); }
 .flexi-summary.is-ok { background: rgba(76, 175, 80, .14); }
 .flexi-summary.is-bad { background: rgba(229, 57, 53, .12); color: var(--tg-theme-destructive-text-color, #e53935); }
 .flexi-summary + .flexi-stale { margin-top: 8px; }
+.flexi-skipped { margin: 8px 4px 0; font-size: 13px; color: var(--hint); text-align: center; }
 .flexi-chains { margin-top: 10px; font-size: 14px; color: var(--hint); text-align: center; }
 .flexi-chains:empty { display: none; }
