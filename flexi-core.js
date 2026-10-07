@@ -1,5 +1,5 @@
 /* Грава — сборщик шарниров «⛓ Цепочка»: фигурка печатается сразу подвижной (print-in-place).
-   Каждая ветвь режется на цепочку звеньев; сустав — отдельная добавленная деталь: «кулак» в «кольце».
+   Позвоночник и лапы режутся на звенья; сустав спрятан внутри: ушко заднего звена в петле переднего.
    Чистые функции без DOM: их используют flexi-worker.js, экран (jointDims/orderCuts) и tests/flexi.test.mjs.
    wasm — инициализированный manifold-3d (Module() + setup()). */
 
@@ -448,7 +448,7 @@ export function repairModel(wasm, model, v = 0.3, onStage) {
   }
   dense.delete();
   // simplify поднимает допуск булевых операций до tol — вернём точный, иначе на совпадающих гранях
-  // кулака, кольца и кожи остаются плёнки толщиной с допуск
+  // петли, ушка и кожи остаются плёнки толщиной с допуск
   const exact = raw.setTolerance(1e-5);
   raw.delete();
   raw = exact;
@@ -628,82 +628,43 @@ export function ztopAt(an, x, y, r = 3) {
   return z;
 }
 
-// Низкий верх кожи в кольце r0…r1 вокруг точки: 15-й процентиль карты высот (щель в бороздке — 0).
-export function zlowAt(an, x, y, r0, r1) {
-  const { x0, y0, step, W, H } = an.grid;
-  const cx = (x - x0) / step - 0.5, cy = (y - y0) / step - 0.5, a = r0 / step, b = r1 / step;
-  const zs = [];
-  for (let py = Math.max(0, Math.floor(cy - b)); py <= Math.min(H - 1, Math.ceil(cy + b)); py++) {
-    for (let px = Math.max(0, Math.floor(cx - b)); px <= Math.min(W - 1, Math.ceil(cx + b)); px++) {
-      const d2 = (px - cx) ** 2 + (py - cy) ** 2;
-      if (d2 > b * b || d2 < a * a) continue;
-      const t = an.top[py * W + px];
-      zs.push(t > 0 ? t : 0);
-    }
-  }
-  if (!zs.length) return 0;
-  zs.sort((p, q) => p - q);
-  return zs[Math.floor(zs.length * 0.15)];
-}
-
 /* ---------- Размеры сустава ---------- */
 
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-// Минимальный радиус кулака: проём кольца должен быть уже кулака.
-export function rMin(alphaDeg, wn, g) {
-  const a = alphaDeg * DEG;
-  return (0.6 + (wn + g) * Math.cos(a) + g * Math.sin(a)) / (1 - Math.sin(a));
-}
-
-/* Сустав звена. opts: { g — зазор, alphaSeg — поворот на звено, ° }.
-   w — полуширина ветви в месте разреза, ztop — верх кожи над суставом, zlip — низкий верх кожи над губой кольца
-   (см. jointAt). Кулак и кольцо — на всю высоту фигурки H (сверху не остаётся ямы), лишнее срезается по коже.
-   Верхняя губа кольца (над фаской кулака) — на высоте Hl, ниже кожи: на круглой спине обрезка её не съест.
-   Выше Hl кулак продолжается столбиком радиуса R − c до самого верха. Все размеры в мм, alpha — в градусах. */
-export function jointDims(opts, w, ztop, zlip = ztop, wOut = w, zbot = 0) {
+/* Сустав «ушко в петле» (как у flexi happy lizard). opts: { g — зазор, alphaSeg — поворот на звено, ° }.
+   w — полуширина модели в точке разреза, Hs — высота модели на оси сустава, z0 — низ кожи на оси.
+   У заднего звена (родителя) посередине высоты вперёд торчит плоское ушко — горизонтальное кольцо с дыркой;
+   у переднего (ребёнка) — петля: стойка сквозь дырку ушка, сверху и снизу перекладины уходят в тело ребёнка.
+   Все размеры в мм, alpha — в градусах. Rh — «радиус» сустава для расстановки: (La + Re + 2)/2, сумма двух
+   соседних Rh — это шаг La + Re + 2. fits — сустав помещается внутри: Lt + 0.8 ≤ Hs и Re + g + 0.8 ≤ w. */
+export function jointDims(opts, w, Hs, wOut = w, z0 = 0) {
   const g = opts.g;
   const alpha = opts.alphaSeg;
-  const H = Math.max(6, ztop);
-  const c = Math.min(1.5, H / 4);
-  const Hl = clamp(zlip - 1.2, 2 * c + 1.5, H);
-  // нижняя губа — так же над низом кожи (шея между головой и телом, хвост приподняты над столом)
-  const Hb = zbot > 0.3 ? Math.min(zbot + 1.2, Hl - 2 * c - 1) : 0;
-  const gc = 1.42 * g;
-  const t = 1.6;
-  // шейка 0.3·w (1.2…2 мм); в тесном месте — тоньше, чтобы кулак и кольцо поместились внутри: Rh ≤ w − 0.4
-  let wn = clamp(0.3 * w, 1.2, 2.0);
-  while (wn > 1.2 && rMin(alpha, wn, g) + g + t > w - 0.4) wn = Math.max(1.2, wn - 0.1);
-  const R = Math.max(rMin(alpha, wn, g), Math.min(w - g - t - 0.6, opts.rCap || 6)); // на позвоночнике — до 4.5
-  const Rh = R + g + t;
+  const b = clamp(0.2 * Math.min(2 * w, Hs), 1.6, 2.4); // толщина перекладин и стойки
+  const be = 0.8 * b;                                    // ширина кольца ушка
+  const te = b;                                          // толщина ушка
+  const ai = be + 2 * g + 0.6;                           // длина проёма петли (вдоль n)
+  const hi = te + 2 * g + 0.4;                           // высота проёма петли
+  const Lt = 2 * b + hi;                                 // высота петли
+  const La = b / 2 + ai + b;                             // вылет петли вперёд
+  const Re = b / 2 + g + be;                             // наружный радиус ушка
+  const ez0 = b + g, ez1 = ez0 + te;                     // ушко по высоте (от низа петли)
+  const Rh = (La + Re + 2) / 2;
   return {
-    g, w, R, wn, H, Hl, Hb: Math.max(0, Hb), c, gc, t, Rh, b: R - c + gc, alpha,
-    // не дальше w + 6: широкий вырез у ядра прорезал бы кольца соседних суставов
-    Rs: Math.max(Rh + g + 0.5, w + 2, Math.min(wOut + 1.5, w + 6)),
+    g, w, Hs, z0, b, be, te, ai, hi, Lt, La, Re, ez0, ez1, Rh, alpha, H: Lt,
+    fits: Lt + 0.8 <= Hs && Re + g + 0.8 <= w,
+    // V-вырез — всю ширину тела (не дальше w + 6: у ядра прорезал бы суставы соседей)
+    Rs: Math.max(Re + g + 0.5, w + 2, Math.min(wOut + 1.5, w + 6)),
   };
 }
 
-// Размеры сустава в точке P: H — максимальная высота кожи в круге Rh + g (+0.3 мм на шаг карты высот),
-// губа кольца — под кожей над кольцом R − c … R + g. V-вырез — до края силуэта поперёк ветви (n — направление
-// разреза): в бороздке ветвь уже, а рядом шире; недорезанный бок упрётся при повороте.
+// Размеры сустава в точке P: высота и низ кожи на оси (по мешу), V-вырез — до края силуэта поперёк ветви.
 export function jointAt(an, opts, w, P, n) {
-  const d0 = jointDims(opts, w, 0);
-  const H = ztopAt(an, P[0], P[1], d0.Rh + opts.g) + 0.3;
-  // высокий низ кожи над кольцом R − c … R + g (85-й процентиль по 32 точкам)
-  let zbot = 0;
-  if (an.mesh) {
-    const zs = [];
-    for (const r of [d0.R - d0.c / 2, d0.R + opts.g / 2]) {
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * 2 * Math.PI;
-        const sp = verticalSpan(an.mesh, P[0] + r * Math.cos(a), P[1] + r * Math.sin(a));
-        zs.push(sp ? sp.zb : 0);
-      }
-    }
-    zs.sort((p, q) => p - q);
-    zbot = zs[Math.floor(zs.length * 0.85)];
-  }
+  let Hs = ztopAt(an, P[0], P[1], 0.5), z0 = 0;
+  const sp = an.mesh && verticalSpan(an.mesh, P[0], P[1]);
+  if (sp) { Hs = sp.zt - sp.zb; z0 = Math.max(0, sp.zb); }
   let wOut = w;
   if (n) {
     const { x0, y0, step, W, H: GH } = an.grid;
@@ -711,9 +672,9 @@ export function jointAt(an, opts, w, P, n) {
       const px = Math.floor((x - x0) / step), py = Math.floor((y - y0) / step);
       return px >= 0 && py >= 0 && px < W && py < GH && an.heights[py * W + px] > 0;
     };
-    const b = (opts.alphaSeg / 2) * DEG;
+    const bt = (opts.alphaSeg / 2) * DEG;
     for (const sg of [1, -1]) {
-      for (const db of [-b, 0, b]) {
+      for (const db of [-bt, 0, bt]) {
         const a = Math.atan2(n[1], n[0]) + sg * Math.PI / 2 + db;
         let r = 0;
         while (r < 60 && inside(P[0] + Math.cos(a) * (r + step), P[1] + Math.sin(a) * (r + step))) r += step;
@@ -721,11 +682,14 @@ export function jointAt(an, opts, w, P, n) {
       }
     }
   }
-  return jointDims(opts, w, H, zlowAt(an, P[0], P[1], d0.R - d0.c, d0.R + opts.g), wOut, zbot);
+  return jointDims(opts, w, Hs, wOut, z0);
 }
 
-// Сустав прячется внутри фигурки, только если кольцо уже ветви: Rh ≤ w − 0.4.
-export const jointFits = (Rh, w) => Rh <= w - 0.4;
+// Высота модели на оси (без меша — по карте высот).
+function heightAt(an, P) {
+  const sp = an.mesh && verticalSpan(an.mesh, P[0], P[1]);
+  return sp ? sp.zt - sp.zb : ztopAt(an, P[0], P[1], 0.5);
+}
 
 /* ---------- Бороздки ---------- */
 
@@ -834,7 +798,7 @@ export function cutAt(an, opts, bi, k, w) {
   const br = an.branches[bi];
   if (w == null) w = brMinDt(br, k);
   const P = br.pts[k].slice();
-  const d = jointDims(opts, w, ztopAt(an, P[0], P[1]));
+  const d = jointDims(opts, w, heightAt(an, P));
   const ahead = d.Rh + opts.g + 1.5;
   let n = brDir(br, k);
   if (br.cum[br.cum.length - 1] - br.cum[k] > ahead) {
@@ -849,7 +813,7 @@ export function cutAt(an, opts, bi, k, w) {
       n = [Math.cos(a), Math.sin(a)];
     }
   }
-  return { P, n, w, br: bi, s: br.cum[k], Rh: d.Rh };
+  return { P, n, w, br: bi, s: br.cum[k], Rh: d.Rh, fit: d.fits };
 }
 
 // Проба ребёнка (как при сборке) должна попасть в силуэт, иначе сустав не встанет.
@@ -873,18 +837,17 @@ const farEnough = (a, b, g) => Math.hypot(a.P[0] - b.P[0], a.P[1] - b.P[1]) >= s
 /* Звенья: лапы и позвоночник. opts: + k (длина звена 0.8–1.6), kBody (звенья тела 0.4–1.0, по умолчанию 0.5).
    1. Лапы: разрез у основания каждой лапы (на выходе из тела) и дальше по лапе, если она толстая.
    2. Позвоночник (an.branches[0], от морды до кончика хвоста) — по всей длине, включая тело: от шеи с шагом
-      max(2·Rh + 2, k·2·w), внутри тела k = kBody; кулак не больше 4.5 мм. Разрез не ближе Rh + 3 мм к месту,
+      max(La + Re + 2, k·2·w), внутри тела k = kBody. Разрез не ближе Rh + 3 мм к месту,
       где лапа выходит из тела (вдоль позвоночника) — лапа остаётся на своём звене (грудном, тазовом).
    Везде: разрез ближе Rh + 2 к бороздке переезжает в неё; звено ставится, только если сустав прячется внутри
-   (Rh ≤ w − 0.4), иначе место попадает в thin — серые точки на экране.
+   (jointDims → fits), иначе место попадает в thin — серые точки на экране.
    Возвращает { cuts, thin, legs }. Разрез: { P, n, w, chain, dist, auto, br, s, root, spine }, не больше 40. thin: [[x, y], …]. */
-export const SPINE_R = 4.5;
 export function autoCuts(an, opts) {
   const limit = 40;
   const g = opts.g;
   const thin = [];
   const tooThin = (c) => {
-    if (jointFits(c.Rh, c.w)) return false;
+    if (c.fit) return false;
     if (!thin.some((p) => Math.hypot(p[0] - c.P[0], p[1] - c.P[1]) < 3)) thin.push(c.P.slice());
     return true;
   };
@@ -902,7 +865,7 @@ export function autoCuts(an, opts) {
     for (const k of cand) {
       const q = cutAt(an, o, bi, k);
       if (prev && (br.cum[k] <= prev.s || !farEnough(q, prev, g))) continue;
-      if (blocked(q) || avoid(q) || !jointFits(q.Rh, q.w)) continue;
+      if (blocked(q) || avoid(q) || !q.fit) continue;
       if (!roomLeft(an, q, g) || !probeInside(an, q, g)) continue;
       return Object.assign(q, { groove: true });
     }
@@ -925,12 +888,12 @@ export function autoCuts(an, opts) {
     if (!c) return null;
     c = snap(bi, c, cur, o);
     if (!roomLeft(an, c, g) || !probeInside(an, c, g)) return null;
-    if (!jointFits(c.Rh, c.w)) {
+    if (!c.fit) {
       // тонкое место (бороздка, перехват) — поищем утолщение чуть дальше, до 6 мм
       let alt = null;
       for (let dd = 1; dd <= 6 && !alt; dd++) {
         const q = cutAt(an, o, bi, brAt(br, c.s + dd));
-        if (q.s > c.s && jointFits(q.Rh, q.w) && (!cur || farEnough(q, cur, g)) && !blocked(q) && !avoid(q) &&
+        if (q.s > c.s && q.fit && (!cur || farEnough(q, cur, g)) && !blocked(q) && !avoid(q) &&
           roomLeft(an, q, g) && probeInside(an, q, g)) alt = q;
       }
       if (!alt) { tooThin(c); return null; }
@@ -942,8 +905,8 @@ export function autoCuts(an, opts) {
     const br = an.branches[bi];
     const kc = brAt(br, cur.s);
     const wc = brMaxDt(br, cur.s - 2, cur.s + 2);
-    const dc = jointDims(o, wc, ztopAt(an, br.pts[kc][0], br.pts[kc][1]));
-    return cur.s + Math.max(2 * dc.Rh + 2, k * 2 * wc);
+    const dc = jointDims(o, wc, heightAt(an, br.pts[kc]));
+    return cur.s + Math.max(dc.La + dc.Re + 2, k * 2 * wc);
   };
 
   // 1. лапы (и прочие ветви, выходящие из тела не по позвоночнику)
@@ -978,7 +941,7 @@ export function autoCuts(an, opts) {
   let spineList = [];
   if (spine && spine.spine) {
     const br = spine, bi = 0;
-    const oS = Object.assign({}, opts, { rCap: SPINE_R });
+    const oS = opts;
     const L = br.cum[br.cum.length - 1];
     // где лапы выходят из тела: разрез у основания (или выход ветви), спроецированный на позвоночник
     const legS = [];
@@ -1012,9 +975,9 @@ export function autoCuts(an, opts) {
     let c = null;
     for (let sv = Math.max(0, s0 - 2); sv < L && !c; sv += 0.5) {
       const q = cutAt(an, oS, bi, brAt(br, sv));
-      if (!jointFits(q.Rh, q.w) || avoid(q) || blocked(q) || !roomLeft(an, q, g) || !probeInside(an, q, g)) continue;
+      if (!q.fit || avoid(q) || blocked(q) || !roomLeft(an, q, g) || !probeInside(an, q, g)) continue;
       const sn = snap(bi, q, null, oS);
-      c = jointFits(sn.Rh, sn.w) && !avoid(sn) ? sn : q;
+      c = sn.fit && !avoid(sn) ? sn : q;
     }
     while (c && br.cum[brAt(br, c.s)] < L) {
       spineList.push(c);
@@ -1099,40 +1062,32 @@ export function verticalSpan(mesh, x, y) {
 
 const SEG = 48;
 
-/* Тела сустава в мировых координатах. Строим в локальных: ось — вертикаль через начало, +X = n.
-   skin — цельная модель: кулак, шейка и кольцо обрезаются по ней, снаружи остаются только щели. */
+/* Тела сустава «ушко в петле» в мировых координатах. Строим в локальных: ось — вертикаль через начало,
+   +X = n (вперёд, к ребёнку), z = 0 — низ кожи на оси (d.z0). Потом поворот к n и сдвиг в P.
+   Ребёнку: loop — стойка на оси, перекладины снизу и сверху, передняя стойка уходит в тело ребёнка на 2 мм.
+   Родителю: ring — плоское кольцо вокруг стойки на высоте ez0…ez1; eyeNeck — его шейка назад, к телу родителя
+   (сборщик обрезает её по телу родителя). Очистки: fan — канал петли в родителе (± (α + 3°)),
+   eyeClear — место ушка в ребёнке. notch — V-вырез вокруг оси. skin — цельная модель: петля и ушко по ней обрезаются. */
 export function jointBodies(wasm, d, P, n, skin) {
-  const { Manifold, CrossSection } = wasm;
-  const { R, H, Hl, Hb, c, gc, b, g, wn, Rh, Rs } = d;
+  const { Manifold } = wasm;
+  const { b, g, La, Lt, hi, Re, ez0, ez1, Rs, z0 } = d;
   const tmp = [];
   const T = (m) => { tmp.push(m); return m; };
-  const rev = (pts) => {
-    const cs = new CrossSection([pts]);
-    const m = Manifold.revolve(cs, SEG);
-    cs.delete();
-    return m;
-  };
-  const tall = (r) => T(T(Manifold.cylinder(250, r, r, SEG)).translate([0, 0, -50]));
+  const box = (x0, x1, hy, za, zb) => T(T(Manifold.cube([x1 - x0, 2 * hy, zb - za])).translate([x0, -hy, za]));
+  const cyl = (r, za, zb) => T(T(Manifold.cylinder(zb - za, r, r, SEG)).translate([0, 0, za]));
+  const tall = (r) => cyl(r, -50, 200);
 
-  // кулак: фаски снизу и на высоте Hl, выше — столбик R − c до верха; гнездо повторяет его с зазором g
-  // снизу так же: если кожа приподнята, фаска и нижняя губа — на высоте Hb, ниже — столбик R − c
-  const stepUp = H - Hl > 0.05, stepDn = Hb > 0.05;
-  const kBot = stepDn ? [[0, 0], [R - c, 0], [R - c, Hb], [R, Hb + c]] : [[0, 0], [R - c, 0], [R, c]];
-  const kTop = stepUp ? [[R, Hl - c], [R - c, Hl], [R - c, H], [0, H]] : [[R, H - c], [R - c, H], [0, H]];
-  const knuckle = rev(kBot.concat(kTop));
-  const sBot = stepDn
-    ? [[0, -1], [R - c + g, -1], [R - c + g, Hb + g - gc], [R + g, Hb + c + g - gc]]
-    : [[0, -1], [b - 1, -1], [R + g, c + g - gc]];
-  const sTop = stepUp
-    ? [[R + g, Hl - c - g + gc], [R - c + g, Hl - g + gc], [R - c + g, H + 1], [0, H + 1]]
-    : [[R + g, H - c - g + gc], [b - 1, H + 1], [0, H + 1]];
-  const socket = T(rev(sBot.concat(sTop)));
-  const box = T(T(Manifold.cube([Rh + g + 5, 2 * (wn + g), H + 2])).translate([0, -(wn + g), -1]));
-  const fan = Manifold.hull([T(box.rotate([0, 0, -d.alpha])), T(box.rotate([0, 0, d.alpha]))]);
-  const housing = T(T(Manifold.cylinder(H, Rh, Rh, SEG)).subtract(socket)).subtract(fan);
-  const neck = T(Manifold.cube([Rh + g + 2, 2 * wn, H])).translate([0, -wn, 0]);
-  const clearC = tall(Rh + g).translate([0, 0, 0]);
-  const innerC = tall(Rh - 0.2).translate([0, 0, 0]);
+  // петля ребёнка
+  const loop = Manifold.union([cyl(b / 2, 0, Lt), box(0, La, b / 2, 0, b), box(0, La, b / 2, b + hi, Lt), box(La - b, La + 2, b / 2, 0, Lt)]);
+  // ушко родителя
+  const ring = cyl(Re, ez0, ez1).subtract(cyl(b / 2 + g, ez0 - 1, ez1 + 1));
+  const eyeNeck = box(-(Rs + 1), -(b / 2 + g), Re, ez0, ez1).translate([0, 0, 0]);
+  // канал петли в родителе: петля поворачивается на ±α, с запасом 3°
+  const fb = box(-(b / 2 + g), La + g, b / 2 + g, -1, Lt + g);
+  const fa = (d.alpha + 3);
+  const fan = Manifold.hull([T(fb.rotate([0, 0, -fa])), T(fb.rotate([0, 0, fa]))]);
+  // место ушка в ребёнке: ушко круглое вокруг оси — поворот его не задевает
+  const eyeClear = cyl(Re + g, ez0 - g, ez1 + g).translate([0, 0, 0]);
 
   // V-вырез: родитель оставляет |φ| ≥ 90°+β, ребёнок |φ| ≤ 90°−β, каждый отступает на g/2
   const beta = (d.alpha / 2) * DEG;
@@ -1143,27 +1098,27 @@ export function jointBodies(wasm, d, P, n, skin) {
   const notch = T(zone.subtract(keepParent)).subtract(keepChild);
 
   const deg = Math.atan2(n[1], n[0]) / DEG;
-  const place = (m) => {
+  const place = (m, lift = true) => {
     const r = m.rotate([0, 0, deg]);
-    const t = r.translate([P[0], P[1], 0]);
+    const t = r.translate([P[0], P[1], lift ? z0 : 0]);
     r.delete();
     m.delete();
     return t;
   };
   const out = {
-    knuckle: place(knuckle), housing: place(housing), neck: place(neck), fan: place(fan),
-    clearC: place(clearC), innerC: place(innerC), notch: place(notch),
+    loop: place(loop), ring: place(ring), eyeNeck: place(eyeNeck), fan: place(fan),
+    eyeClear: place(eyeClear), notch: place(notch, false),
   };
   tmp.forEach((m) => m.delete());
   if (skin) {
     // кусок кожи вокруг сустава (так пересечения считаются по маленькому мешу)
-    const L = Rh + g + 3;
+    const L = Math.max(La + 3, Re + g + 1);
     const cube = Manifold.cube([2 * L, 2 * L, 2000]);
-    const box = cube.translate([P[0] - L, P[1] - L, -1000]);
+    const bx = cube.translate([P[0] - L, P[1] - L, -1000]);
     cube.delete();
-    const local = skin.intersect(box);
-    box.delete();
-    for (const k of ['knuckle', 'neck', 'housing']) {
+    const local = skin.intersect(bx);
+    bx.delete();
+    for (const k of ['loop', 'ring']) {
       const m = out[k].intersect(local);
       out[k].delete();
       out[k] = m;
@@ -1234,8 +1189,7 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress) {
   };
   const g = opts.g;
   const fail = (code, text) => { throw new FlexiError(code, text); };
-  const optsOf = (c) => (c.spine ? Object.assign({}, opts, { rCap: SPINE_R }) : opts);
-  const dimsOf = (c) => jointAt(an, optsOf(c), c.w, c.P, c.n);
+  const dimsOf = (c) => jointAt(an, opts, c.w, c.P, c.n);
   const inter = (a, b) => { const x = a.intersect(b); const v = x.volume(); x.delete(); return v; };
   const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   // свободные направления: сдвиг ребёнка на 1 мм не задевает родителя
@@ -1275,27 +1229,24 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress) {
     const made = [];
     const keep = (m) => { made.push(m); return m; };
     try {
-      // 4. отделяем лапу
-      const a1 = keep(piece.m.subtract(B.innerC));
-      const a2 = keep(a1.subtract(B.notch));
+      // 4. отделяем лапу V-вырезом вокруг оси
+      const a2 = keep(piece.m.subtract(B.notch));
       const comps = bigParts(a2); made.push(...comps);
       const ci = comps.findIndex((m) => probe(wasm, m, qc[0], qc[1], qz));
       const others = comps.filter((_, i) => i !== ci);
       if (ci < 0 || others.length === 0) fail('no_split', 'Разрез не отделил лапу — сдвинь дальше от тела');
       // «отрезал кусок» проверяем ниже, после кольца: оно может снова пришить щепку у сустава к телу
 
-      // 5. ребёнок: лапа без зоны сустава + кулак + шейка
-      const c1 = keep(comps[ci].subtract(B.clearC));
-      const c2 = keep(c1.add(B.knuckle));
-      const c3 = keep(c2.add(B.neck));
-      const cParts = bigParts(c3); made.push(...cParts);
-      // кулак обрезан по коже: в бороздке над P кожа ниже H — щупаем середину кожи в точке P
-      const sp0 = verticalSpan(mesh, P[0], P[1]);
-      const kz = sp0 ? (sp0.zb + Math.min(sp0.zt, d.H)) / 2 : d.H / 2;
-      const ki = cParts.findIndex((m) => probe(wasm, m, P[0], P[1], kz));
+      // 5. ребёнок: лапа без места под ушко + петля
+      const c1 = keep(comps[ci].subtract(B.eyeClear));
+      const c2 = keep(c1.add(B.loop));
+      const cParts = bigParts(c2); made.push(...cParts);
+      // щупаем переднюю стойку петли (она сращена с телом ребёнка)
+      const fx = d.La - d.b / 2;
+      const ki = cParts.findIndex((m) => probe(wasm, m, P[0] + n[0] * fx, P[1] + n[1] * fx, d.z0 + d.Lt / 2));
       if (ki < 0 || cParts.length > 1) fail('child_split', 'Лапа развалилась у сустава — сдвинь разрез');
 
-      // 6. родитель: тело без проёма + кольцо (крошки от проёма — в мусор)
+      // 6. родитель: тело без канала петли (до ушка!) + ушко (крошки от канала — в мусор)
       const p0 = keep(unionAll(wasm, others));
       const p1 = keep(p0.subtract(B.fan));
       const pParts = bigParts(p1); made.push(...pParts);
@@ -1310,26 +1261,29 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress) {
         const dx = Math.max(bb.min[0] - P[0], 0, P[0] - bb.max[0]);
         const dy = Math.max(bb.min[1] - P[1], 0, P[1] - bb.max[1]);
         if (Math.hypot(dx, dy) > d.Rh + g) continue;
-        const q1 = keep(pieces[qi].m.subtract(B.clearC));
+        const q1 = keep(pieces[qi].m.subtract(B.eyeClear));
         const q2 = keep(q1.subtract(B.fan));
         const qs = bigParts(q2); made.push(...qs);
         if (qs.length > pieces[qi].n || !qs.length) fail('neighbour', 'Сустав разрезал соседнюю деталь — сдвинь разрез');
-        changed.push({ qi, m: unionAll(wasm, qs) });
+        changed.push({ qi, m: keep(unionAll(wasm, qs)) });
       }
 
-      // 8. кольцо может замкнуть с телом пустоту (кусок V-выреза) — внутренние пустоты и крошки убираем
-      const parentM = keep(solidParts(wasm, keep(p2.add(B.housing))));
+      // 8. ушко: кольцо + шейка, обрезанная по телу родителя (дальше назад, за прошлый сустав, ей нельзя)
+      const neck = keep(B.eyeNeck.intersect(p2));
+      const eye = keep(B.ring.add(neck));
+      const parentM = keep(solidParts(wasm, keep(p2.add(eye))));
       // «отрезал кусок» — только если у родителя кусков стало больше, чем было у детали до разреза
       const pn = bigCount(parentM);
       if (pn > piece.n && pParts.length > piece.n) fail('two_parents', 'Сустав отрезал кусок тела — сдвинь разрез');
-      if (pn > piece.n) fail('weak', 'Кольцо сустава отвалилось — тут тонко');
+      if (pn > piece.n) fail('weak', 'Ушко сустава отвалилось — тут тонко');
       // обрезка по коже могла срезать губу кольца (низкий круглый хвост): автоматическое звено обязано держать
       if (cut.auto) {
         // звено, которое не касается стола, без поддержек не напечатать (кончик щупальца в воздухе)
         if (cParts[ki].boundingBox().min[2] > 0.05) fail('hang', 'Звено висит над столом');
-        // быстро и по месту: кулак с шейкой против кольца (держат они — держит и деталь целиком)
-        const kn = keep(B.knuckle.add(B.neck));
-        if (freeDirs(kn, B.housing).length) fail('weak', 'Звено не держит — тут тонко');
+        // и родитель не должен оторваться от стола (средний кусок щупальца)
+        if (parentM.boundingBox().min[2] > 0.05 && piece.m.boundingBox().min[2] <= 0.05) fail('hang', 'Звено висит над столом');
+        // быстро и по месту: петля против ушка (держат они — держит и деталь целиком)
+        if (freeDirs(B.loop, eye).length) fail('weak', 'Звено не держит — тут тонко');
         // и поворачивается на ±α: щель модели рядом с суставом может оставить родителю щепку перед P
         const L = d.Rs + 1;
         const cube = keep(wasm.Manifold.cube([2 * L, 2 * L, 2000]));
@@ -1346,23 +1300,23 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress) {
       // 9. всё получилось — заменяем детали
       const child = cParts[ki].translate([0, 0, 0]);
       made.splice(made.indexOf(parentM), 1);
-      changed.forEach(({ qi, m }) => { pieces[qi].m.delete(); pieces[qi].m = m; });
+      changed.forEach(({ qi, m }) => { made.splice(made.indexOf(m), 1); pieces[qi].m.delete(); pieces[qi].m = m; });
       const jointIdx = joints.length;
       joints.push({
-        id: cut.id, P: P.slice(), n: n.slice(), Rh: d.Rh, R: d.R, alpha: d.alpha, H: d.H,
+        id: cut.id, P: P.slice(), n: n.slice(), Rh: d.Rh, b: d.b, Re: d.Re, alpha: d.alpha, H: d.H,
+        zEye: d.z0 + (d.ez0 + d.ez1) / 2,
         parent: piece.joint, chain: cut.chain == null ? -1 : cut.chain, spine: !!cut.spine, s: cut.s,
       });
       piece.m.delete();
       pieces.splice(pi, 1, { m: parentM, joint: piece.joint, n: pn }, { m: child, joint: jointIdx, n: 1 });
       // разрез позвоночника делит тело, на котором уже держатся лапы: кольцо лапы могло уйти в новую половину —
-      // тогда её родитель теперь новое звено (щупаем стенку кольца позади сустава)
+      // тогда её родитель теперь новое звено (щупаем кольцо ушка позади оси)
       for (let ji = 0; ji < jointIdx; ji++) {
         const J = joints[ji];
         if (J.parent !== piece.joint) continue;
-        const rr = (J.R + g + J.Rh) / 2;
+        const rr = (J.b / 2 + g + J.Re) / 2;
         const Q = [J.P[0] - J.n[0] * rr, J.P[1] - J.n[1] * rr];
-        const sp = verticalSpan(mesh, Q[0], Q[1]);
-        if (sp && probe(wasm, child, Q[0], Q[1], (sp.zb + sp.zt) / 2)) J.parent = jointIdx;
+        if (probe(wasm, child, Q[0], Q[1], J.zEye)) J.parent = jointIdx;
       }
     } finally {
       made.forEach((m) => { try { m.delete(); } catch (e) { /* уже */ } });
@@ -1378,10 +1332,10 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress) {
     if (Math.hypot(br.pts[k0][0] - cut.P[0], br.pts[k0][1] - cut.P[1]) > 1.5) return null; // ветви уже другие
     const s = cut.s + delta;
     if (s < 0 || s > br.cum[br.cum.length - 1]) return null;
-    const c = Object.assign(cutAt(an, optsOf(cut), cut.br, brAt(br, s)), { id: cut.id, chain: cut.chain, auto: true, root: cut.root, spine: cut.spine });
+    const c = Object.assign(cutAt(an, opts, cut.br, brAt(br, s)), { id: cut.id, chain: cut.chain, auto: true, root: cut.root, spine: cut.spine });
     if (cut.spine && (an.legS || []).some((x) => Math.abs(c.s - x) < c.Rh + 3)) return null; // корень лапы
     if (Math.abs(c.s - cut.s - delta) > 0.8) return null; // эта точка уже была
-    if (br.cum[br.cum.length - 1] - c.s <= c.Rh + g + 4 || !jointFits(c.Rh, c.w)) return null;
+    if (br.cum[br.cum.length - 1] - c.s <= c.Rh + g + 4 || !c.fit) return null;
     // соседи — уже построенные звенья (следующие разрезы проверят себя сами, у них свои сдвиги)
     if (joints.some((J) => Math.hypot(J.P[0] - c.P[0], J.P[1] - c.P[1]) < sepMin(J.Rh, c.Rh, g))) return null;
     delete c.Rh;

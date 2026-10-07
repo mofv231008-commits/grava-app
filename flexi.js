@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=6';
-const FLEXI_CORE_URL = './flexi-core.js?v=6';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=7';
+const FLEXI_CORE_URL = './flexi-core.js?v=7';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -44,7 +44,7 @@ function openFlexi(id) {
     g: 0.45,
     k: 1.2,
     kBody: 0.5, // звенья позвоночника внутри тела — короче (тело широкое)
-    alphaSeg: 15,
+    alphaSeg: 20, // «ушко в петле» свободно ходит на ±20°
     prep: null,
     cuts: [],
     edited: false,
@@ -154,10 +154,9 @@ function flexiOpts(f) {
   return { g: f.g, alphaSeg: f.alphaSeg, k: f.k, kBody: f.kBody };
 }
 
-// на позвоночнике кулак не больше 4.5 мм — как в потоке
+// размеры сустава для экрана (точно — с высотой по мешу — считает поток при сборке)
 function flexiDims(f, c) {
-  const o = c.spine ? Object.assign(flexiOpts(f), { rCap: f.core.SPINE_R }) : flexiOpts(f);
-  return f.core.jointDims(o, c.w, flexiZtop(f, c.P[0], c.P[1]));
+  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]));
 }
 
 // Верх модели в радиусе 3 мм — по картинке высот (точное значение считает поток при сборке).

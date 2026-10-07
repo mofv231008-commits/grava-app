@@ -99,7 +99,7 @@ const ok = (name, cond, extra) => {
 const inter = (a, b) => { const x = a.intersect(b); const v = x.volume(); x.delete(); return v; };
 
 function run(name, stl, expect) {
-  const opts = { g: 0.45, alphaSeg: 15, k: 1.2 };
+  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
   const t0 = performance.now();
   const base = loadModel(wasm, parseSTL(stl));
   const length = expect.length || Math.max(150, base.length);
@@ -148,12 +148,17 @@ function run(name, stl, expect) {
   if (res.parts.length > 1) {
     const U = Manifold.union(res.parts.map((p) => p.manifold));
     const out = U.subtract(model);
-    let real = 0;
-    out.decompose().forEach((c) => {
-      const v = c.volume();
-      if (v > 0 && (2 * v) / c.surfaceArea() > 0.05) real += v;
-      c.delete();
-    });
+    // decompose на почти пустой плёнке роняет manifold — раскладываем только когда есть что считать
+    const total = out.volume();
+    let real = Math.max(0, total);
+    if (total >= 1) {
+      real = 0;
+      out.decompose().forEach((c) => {
+        const v = c.volume();
+        if (v > 0 && (2 * v) / c.surfaceArea() > 0.05) real += v;
+        c.delete();
+      });
+    }
     ok('ничего не выходит за кожу: (все детали − кожа) < 1 мм³', real < 1, real.toFixed(3) + ' мм³ (с плёнками ' + out.volume().toFixed(2) + ')');
     const zU = U.boundingBox().max[2], zS = model.boundingBox().max[2];
     ok('высота не больше кожи + 0.05 мм', zU <= zS + 0.05, zU.toFixed(3) + ' / ' + zS.toFixed(3));
@@ -252,15 +257,26 @@ const partAt = (parts, x, y, z) => parts.findIndex((p) => {
   c.delete(); t.delete();
   return v > 0;
 });
-// Лапа целиком на своём звене позвоночника: середина и кончик лапы — в той же детали, что тело над её основанием,
-// и эта деталь — не голова (корень). Передние на одном («грудном»), задние на другом («тазовом»).
+// Лапа на своём звене позвоночника: основание (тело над выходом лапы) — звено позвоночника, а не голова (корень);
+// лапа — либо в той же детали, либо цепочкой звеньев, первое из которых держится именно на этом звене.
+// Передние — на одном («грудном»), задние — на другом («тазовом»).
 function legsOnLinks(res, legs, T = (x, y, z) => [x, y, z]) {
+  // деталь-родитель: та, ребёнком которой не является эта деталь, — по суставу, на котором она держится
+  const parentPart = (pi) => {
+    const j = res.parts[pi].joint;
+    return j < 0 ? -1 : res.parts.findIndex((p) => p.joint === res.joints[j].parent);
+  };
+  // часть лапы → вверх по цепочке, пока не выйдем из лапы на деталь тела
+  const rootOf = (pi, body) => {
+    for (let k = 0; k < 20 && pi >= 0 && pi !== body; k++) pi = parentPart(pi);
+    return pi;
+  };
   const where = legs.map(({ name, root, mid, tip }) => ({ name, body: partAt(res.parts, ...T(...root)), mid: partAt(res.parts, ...T(...mid)), tip: partAt(res.parts, ...T(...tip)) }));
-  const whole = where.every((x) => x.body >= 0 && x.mid === x.body && x.tip === x.body && res.parts[x.body].joint >= 0);
-  ok('лапы целиком на звеньях позвоночника', whole, where.map((x) => `${x.name}: ${x.body}/${x.mid}/${x.tip}`).join(', '));
+  const whole = where.every((x) => x.body >= 0 && res.parts[x.body].joint >= 0 && x.mid >= 0 && x.tip >= 0 &&
+    rootOf(x.mid, x.body) === x.body && rootOf(x.tip, x.body) === x.body);
+  ok('лапы держатся на звеньях позвоночника (не на голове)', whole, where.map((x) => `${x.name}: тело ${x.body}, лапа ${x.mid}/${x.tip}`).join(', '));
   return where;
 }
-// кот: голова +X (x ≈ 37…63 в модели), хвост −X; после центровки x сдвинут на +18.5
 const catCheck = (cuts) => {
   const X = (c) => c.P[0] - 18.5; // назад в координаты модели
   const spine = cuts.filter((c) => c.spine);
@@ -286,7 +302,26 @@ const MODELS = {
   skeleton: () => ({ m: skeleton(), expect: { noLinks: 5, maxMs: 30000 } }),
 };
 
+// Отдельно сустав «ушко в петле»: брусок W×H (длина 60), один разрез посередине.
+function jointBar(W, H) {
+  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
+  const bar = own(Manifold.cube([60, W, H]), (m) => m.translate([-30, -W / 2, 0]));
+  const mesh = meshOf(bar);
+  const an = analyze(mesh, bar.boundingBox());
+  const res = buildJoints(wasm, bar, mesh, an, [{ id: 1, P: [0, 0], n: [1, 0], w: W / 2, chain: 0 }], opts);
+  console.log(`\nсустав в бруске ${W}×${H} мм — ${res.summary}`);
+  const J = res.joints[0] || {};
+  ok('2 детали, обе цельные', res.parts.length === 2 && res.parts.every((p) => { const cs = p.manifold.decompose(); const n = cs.length; cs.forEach((c) => c.delete()); return n === 1; }));
+  ok('сдвиг ребёнка на 1 мм в любую из 6 сторон задевает родителя', J.hold === true);
+  ok('поворот ±20° свободен', J.turn != null && J.turn <= 0.5 && J.alpha === 20, J.turn);
+  ok('минимальный зазор ≥ 0.4 мм', J.gap >= 0.4, J.gap && J.gap.toFixed(3));
+  ok('ни одной ошибки', !res.notes.some((x) => x.level === 'error'), res.notes.map((x) => x.text));
+  res.parts.forEach((p) => p.manifold.delete());
+  bar.delete();
+}
+
 const T0 = performance.now();
+if (!ONLY || ONLY.includes('joint')) { jointBar(16, 11); jointBar(10, 8); }
 for (const [name, mk] of Object.entries(MODELS)) {
   if (ONLY && !ONLY.includes(name)) continue;
   const { m, expect } = mk();

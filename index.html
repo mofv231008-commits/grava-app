@@ -145,8 +145,8 @@
                 <input class="cad-slider" type="range" id="flexi-kb" min="0.4" max="1.0" step="0.1" value="0.5">
               </div>
               <div class="cad-param">
-                <div class="cad-param-head"><label class="cad-param-label" for="flexi-aseg">Гибкость (на звено)</label><b class="flexi-val" id="flexi-aseg-val">±15°</b></div>
-                <input class="cad-slider" type="range" id="flexi-aseg" min="10" max="20" step="1" value="15">
+                <div class="cad-param-head"><label class="cad-param-label" for="flexi-aseg">Гибкость (на звено)</label><b class="flexi-val" id="flexi-aseg-val">±20°</b></div>
+                <input class="cad-slider" type="range" id="flexi-aseg" min="10" max="25" step="1" value="20">
               </div>
             </div>
           </details>
@@ -164,7 +164,7 @@
             <div class="flexi-notes" id="flexi-notes"></div>
           </div>
 
-          <p class="note" id="flexi-hint">Печатай без поддержек, масштаб 100%, слой 0.2. После печати разомни цепочку от тела к кончикам. Прилипло — зазор 0.55 и пересобери.</p>
+          <p class="note" id="flexi-hint">Слой 0.16–0.2, без поддержек, мосты (bridging) включены — ушко и перекладины печатаются мостиками. Масштаб 100%. После печати разомни цепочку от тела к кончикам. Прилипло — зазор 0.55 и пересобери.</p>
         </div>
       </div>
     </section>
@@ -334,6 +334,6 @@
   <script src="app.js?v=8"></script>
   <script src="editor.js?v=6"></script>
   <script src="cad.js?v=1"></script>
-  <script src="flexi.js?v=6"></script>
+  <script src="flexi.js?v=7"></script>
 </body>
 </html>
