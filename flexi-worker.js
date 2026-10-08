@@ -2,7 +2,7 @@
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=7';
+} from './flexi-core.js?v=8';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)

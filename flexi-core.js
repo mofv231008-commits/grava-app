@@ -1111,14 +1111,15 @@ export function jointBodies(wasm, d, P, n, skin) {
   };
   tmp.forEach((m) => m.delete());
   if (skin) {
-    // кусок кожи вокруг сустава (так пересечения считаются по маленькому мешу)
-    const L = Math.max(La + 3, Re + g + 1);
+    // кусок кожи вокруг сустава (так пересечения считаются по маленькому мешу); шейка ушка уходит назад на Rs + 1
+    const L = Math.max(La + 3, Re + g + 1, Rs + 2);
     const cube = Manifold.cube([2 * L, 2 * L, 2000]);
     const bx = cube.translate([P[0] - L, P[1] - L, -1000]);
     cube.delete();
     const local = skin.intersect(bx);
     bx.delete();
-    for (const k of ['loop', 'ring']) {
+    // по коже — всё, что добавляется к деталям: петля, кольцо ушка и его шейка (сзади тело может сужаться)
+    for (const k of ['loop', 'ring', 'eyeNeck']) {
       const m = out[k].intersect(local);
       out[k].delete();
       out[k] = m;

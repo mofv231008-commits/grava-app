@@ -98,6 +98,29 @@ const ok = (name, cond, extra) => {
 };
 const inter = (a, b) => { const x = a.intersect(b); const v = x.volume(); x.delete(); return v; };
 
+// Сустав спрятан: ничего не выходит за кожу (цельную модель после починки) и итог не выше неё.
+// Плёнки ~0.01 мм на совпадающих гранях — шум булевых операций, их не считаем: учитываются куски толще 0.05 мм.
+function skinCheck(parts, skin) {
+  const U = Manifold.union(parts.map((p) => p.manifold));
+  const out = U.subtract(skin);
+  // decompose на почти пустой плёнке роняет manifold — раскладываем только когда есть что считать
+  const total = out.volume();
+  let real = Math.max(0, total);
+  if (total >= 1) {
+    real = 0;
+    out.decompose().forEach((c) => {
+      const v = c.volume();
+      if (v > 0 && (2 * v) / c.surfaceArea() > 0.05) real += v;
+      c.delete();
+    });
+  }
+  ok('ничего не выходит за кожу: объём (все детали − кожа) < 1 мм³', real < 1, real.toFixed(3) + ' мм³ (с плёнками ' + total.toFixed(2) + ')');
+  const zU = U.boundingBox().max[2], zS = skin.boundingBox().max[2];
+  ok('высота итога ≤ высота кожи + 0.05 мм', zU <= zS + 0.05, zU.toFixed(3) + ' / ' + zS.toFixed(3));
+  out.delete();
+  U.delete();
+}
+
 function run(name, stl, expect) {
   const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
   const t0 = performance.now();
@@ -143,28 +166,7 @@ function run(name, stl, expect) {
   ok('никакие две детали не пересекаются', maxI < 1e-6, maxI);
   ok('поворот на ±α свободен', !warns.some((x) => /упирается/.test(x.text)), warns.filter((x) => /упирается/.test(x.text)).map((x) => x.text));
   ok('нет пропущенных разрезов и висящих деталей', !warns.some((x) => /пропущен|висит/.test(x.text)), warns.map((x) => x.text));
-  // сустав спрятан: ничего не выходит за кожу (цельную модель после починки). Плёнки ~0.01 мм на совпадающих
-  // гранях — шум булевых операций, их не считаем: учитываются куски толще 0.05 мм (печатать такое нечем)
-  if (res.parts.length > 1) {
-    const U = Manifold.union(res.parts.map((p) => p.manifold));
-    const out = U.subtract(model);
-    // decompose на почти пустой плёнке роняет manifold — раскладываем только когда есть что считать
-    const total = out.volume();
-    let real = Math.max(0, total);
-    if (total >= 1) {
-      real = 0;
-      out.decompose().forEach((c) => {
-        const v = c.volume();
-        if (v > 0 && (2 * v) / c.surfaceArea() > 0.05) real += v;
-        c.delete();
-      });
-    }
-    ok('ничего не выходит за кожу: (все детали − кожа) < 1 мм³', real < 1, real.toFixed(3) + ' мм³ (с плёнками ' + out.volume().toFixed(2) + ')');
-    const zU = U.boundingBox().max[2], zS = model.boundingBox().max[2];
-    ok('высота не больше кожи + 0.05 мм', zU <= zS + 0.05, zU.toFixed(3) + ' / ' + zS.toFixed(3));
-    out.delete();
-    U.delete();
-  }
+  skinCheck(res.parts, model);
   // точки модели (как она построена) → после «масштаб, центр в (0,0), срез низа 1 мм»
   const b0 = base.manifold.boundingBox(), sc = length / base.length;
   const T = (x, y, z) => [(x - (b0.min[0] + b0.max[0]) / 2) * sc, (y - (b0.min[1] + b0.max[1]) / 2) * sc, (z - b0.min[2]) * sc - 1];
@@ -302,20 +304,42 @@ const MODELS = {
   skeleton: () => ({ m: skeleton(), expect: { noLinks: 5, maxMs: 30000 } }),
 };
 
-// Отдельно сустав «ушко в петле»: брусок W×H (длина 60), один разрез посередине.
+// Отдельно сустав «ушко в петле»: брусок W×H, длина 60, верх скруглён (r = H/4), один разрез посередине.
+// Всё меряется здесь, по готовым деталям, а не по отчёту сборщика.
+function roundedBar(W, H) {
+  const r = H / 4, L = 60;
+  const base = own(Manifold.cube([L, W, H - r]), (m) => m.translate([-L / 2, -W / 2, 0]));
+  const rod = (y) => own(own(Manifold.cylinder(L, r, r, 32), (m) => m.rotate([0, 90, 0])), (m) => m.translate([-L / 2, y, H - r]));
+  const a = rod(-W / 2 + r), b = rod(W / 2 - r);
+  const bar = Manifold.hull([base, a, b]);
+  [base, a, b].forEach((m) => m.delete());
+  return bar;
+}
 function jointBar(W, H) {
   const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
-  const bar = own(Manifold.cube([60, W, H]), (m) => m.translate([-30, -W / 2, 0]));
+  const bar = roundedBar(W, H);
   const mesh = meshOf(bar);
   const an = analyze(mesh, bar.boundingBox());
   const res = buildJoints(wasm, bar, mesh, an, [{ id: 1, P: [0, 0], n: [1, 0], w: W / 2, chain: 0 }], opts);
   console.log(`\nсустав в бруске ${W}×${H} мм — ${res.summary}`);
-  const J = res.joints[0] || {};
-  ok('2 детали, обе цельные', res.parts.length === 2 && res.parts.every((p) => { const cs = p.manifold.decompose(); const n = cs.length; cs.forEach((c) => c.delete()); return n === 1; }));
-  ok('сдвиг ребёнка на 1 мм в любую из 6 сторон задевает родителя', J.hold === true);
-  ok('поворот ±20° свободен', J.turn != null && J.turn <= 0.5 && J.alpha === 20, J.turn);
-  ok('минимальный зазор ≥ 0.4 мм', J.gap >= 0.4, J.gap && J.gap.toFixed(3));
+  const comps = (m) => { const cs = m.decompose(); const n = cs.length; cs.forEach((c) => c.delete()); return n; };
+  ok('деталей ровно 2, обе цельные', res.parts.length === 2 && res.parts.every((p) => comps(p.manifold) === 1), res.parts.length);
+  const child = (res.parts.find((p) => p.joint === 0) || {}).manifold, parent = (res.parts.find((p) => p.joint === -1) || {}).manifold;
+  if (child && parent) {
+    const hit = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map((v) => {
+      const m = child.translate(v);
+      const x = inter(m, parent);
+      m.delete();
+      return x;
+    });
+    ok('сдвиг ребёнка на 1 мм в любую из 6 сторон задевает родителя', hit.every((x) => x > 0.01), hit.map((x) => x.toFixed(1)).join(' '));
+    const turn = [-20, 20].map((a) => { const m = child.rotate([0, 0, a]); const x = inter(m, parent); m.delete(); return x; });
+    ok('поворот на ±20° свободен (пересечение ≤ 0.5 мм³)', turn.every((x) => x <= 0.5), turn.map((x) => x.toFixed(3)).join(' / '));
+    const gap = child.minGap(parent, 1);
+    ok('минимальный зазор ≥ 0.4 мм', gap >= 0.4, gap.toFixed(3));
+  }
   ok('ни одной ошибки', !res.notes.some((x) => x.level === 'error'), res.notes.map((x) => x.text));
+  skinCheck(res.parts, bar);
   res.parts.forEach((p) => p.manifold.delete());
   bar.delete();
 }
