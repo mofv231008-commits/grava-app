@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=10';
-const FLEXI_CORE_URL = './flexi-core.js?v=10';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=11';
+const FLEXI_CORE_URL = './flexi-core.js?v=11';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -817,9 +817,15 @@ function flexiSuggestBtn() {
 
 /* ---------- Настройки на экране ---------- */
 
+// «Размер: 15 см» вверху экрана — длина фигурки, на которую рассчитаны суставы.
+function flexiShowDim(f) {
+  $('flexi-dim').textContent = 'Размер: ' + String(Math.round(f.length) / 10).replace('.', ',') + ' см';
+}
+
 function flexiRenderSettings() {
   const f = state.flexi;
   if (!f) return;
+  flexiShowDim(f);
   $('flexi-length').value = String(f.length);
   $('flexi-length-val').textContent = f.length + ' мм';
   $('flexi-size').hidden = f.length >= 150;
@@ -836,6 +842,7 @@ function flexiOnLength() {
   const f = state.flexi;
   if (!f) return;
   f.length = Number($('flexi-length').value);
+  flexiShowDim(f);
   $('flexi-length-val').textContent = f.length + ' мм';
   $('flexi-size').hidden = f.length >= 150;
   flexiSchedulePrepare();
