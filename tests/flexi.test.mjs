@@ -1,7 +1,7 @@
 // Тесты сборщика шарниров — тот же код, что в фоновом потоке телефона.
-// Режим один — «⛓ Цепочка»: каждая ветвь режется на звенья.
-// Как в телефоне: масштаб → срез низа → шаг 0 «перепаять» → автопоиск (по бороздкам) → сборка.
-// Запуск: node tests/flexi.test.mjs [only=lizard,skeleton,octopus,snake,gecko]
+// Режим один — «⛓ Цепочка»: разрезы ставит человек (тап по фигурке), каждый сразу проверяется.
+// Как в телефоне: масштаб → срез низа → шаг 0 «перепаять» → «✨ Предложить» → тап по точкам (зелёные остаются) → сборка.
+// Запуск: node tests/flexi.test.mjs [only=hint,joint,taps,lizard,skeleton,octopus,snake,cat,gecko]
 // Итоговые STL — в tests/out/<имя>_chain.stl (не в git). tests/gecko.stl — настоящая модель от бота (геккон с бороздками);
 // другие *.stl, если положить в tests/, прогоняются тоже.
 import fs from 'fs';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import Module from '../vendor/manifold/manifold.js';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, verticalSpan,
-  jointBodies, jointOutside,
+  jointBodies, jointOutside, placeCut, checkCut, prevCut, tooClose, branchGrooves, limbsOf, THIN_WHY,
 } from '../flexi-core.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +43,13 @@ function lizard() {
   const ps = [ell([30, 14, 10], [0, 0, 7]), ell([13, 9, 8], [42, 0, 6])];
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) ps.push(capsule(5.5, [sx * 18, sy * 8, 4], [sx * 24, sy * 34, 4]));
   ps.push(capsule(5.5, [-26, 0, 5], [-78, 0, 3.5]));
+  return finish(ps);
+}
+// Ящерица с хвостом, сужающимся к кончику (как у настоящих): посередине хвоста сустав помещается, у кончика — нет.
+function newt() {
+  const ps = [ell([30, 14, 10], [0, 0, 7]), ell([13, 9, 8], [42, 0, 6])];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) ps.push(capsule(5.5, [sx * 18, sy * 8, 4], [sx * 24, sy * 34, 4]));
+  ps.push(capsule(8, [-26, 0, 7], [-100, 0, 1.8], 1.8));
   return finish(ps);
 }
 function skeleton() {
@@ -135,34 +142,68 @@ function skinInCheck(joints, skinIn) {
   ok('ни один сустав не выходит за skinIn (кожа − 0.8 мм): объём снаружи < 0.5 мм³', worst < 0.5, worst.toFixed(3) + ' мм³');
 }
 
-function run(name, stl, expect) {
-  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
-  const t0 = performance.now();
+// Модель как в телефоне: масштаб, срез низа, починка, анализ, бороздки, skinIn.
+function prepare(stl, length) {
   const base = loadModel(wasm, parseSTL(stl));
-  const length = arg('len') ? +arg('len') : expect.length || Math.max(150, base.length);
+  if (!length) length = Math.max(150, base.length);
   const placed = placeModel(wasm, base.manifold, length, 1);
   const rep = repairModel(wasm, placed);
   placed.delete();
   const model = rep.manifold;
-  const tRep = performance.now();
   const mesh = meshOf(model);
   const an = analyze(mesh, model.boundingBox());
   attachGrooves(an, rep);
   an.skinIn = rep.skinIn; // кожа, сжатая на 0.8 мм
   an.inAt = rep.inAt;
+  // точки модели (как она построена) → после «масштаб, центр в (0,0), срез низа 1 мм»
+  const b0 = base.manifold.boundingBox(), sc = length / base.length;
+  const T = (x, y, z = 0) => [(x - (b0.min[0] + b0.max[0]) / 2) * sc, (y - (b0.min[1] + b0.max[1]) / 2) * sc, (z - b0.min[2]) * sc - 1];
+  const free = () => [model, rep.skinIn, base.manifold].forEach((m) => m.delete());
+  return { base, length, rep, model, mesh, an, T, free };
+}
+
+/* Как человек: «✨ Предложить», тап по каждой точке, где сустав помещается, — разрез ставится и проверяется
+   (placeCut → checkCut вместе с разрезом ближе к телу на той же цепочке, как на экране). Красные (не прошли проверку
+   или ближе 2 мм к соседнему) он убирает. Остальное — в сборку. */
+function acceptSuggestions(M, opts) {
+  const { an, model, mesh } = M;
   const found = autoCuts(an, opts);
-  const auto = orderCuts(found.cuts.map((c, i) => ({ ...c, id: i + 1 })), an.skeleton);
-  const res = buildJoints(wasm, model, mesh, an, auto, opts);
-  const cuts = auto.filter((c) => !res.skipped.includes(c.id)); // пропущенные экран убирает
+  const kept = [], red = [];
+  let same = true;
+  for (const q of orderCuts(found.cuts, an.skeleton)) {
+    const c = placeCut(an, opts, q.P[0], q.P[1], q.br, false);
+    if (!c || Math.hypot(c.P[0] - q.P[0], c.P[1] - q.P[1]) > 1e-6) same = false;
+    if (!c) continue;
+    const onPath = (P) => an.branches[c.br].pts.some((p) => Math.hypot(p[0] - P[0], p[1] - P[1]) < 1.5);
+    const v = c.fit ? checkCut(wasm, model, mesh, an, c, opts, prevCut(kept, c, onPath)) : { ok: false, code: 'thin' };
+    if (!v.ok) { red.push(v.code); continue; }
+    if (kept.some((o) => tooClose(o, c))) { red.push('near'); continue; }
+    kept.push(Object.assign(c, { id: kept.length + 1 }));
+  }
+  return { found, cuts: orderCuts(kept, an.skeleton), red, same };
+}
+
+function run(name, stl, expect) {
+  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
+  const t0 = performance.now();
+  const M = prepare(stl, arg('len') ? +arg('len') : expect.length);
+  const { base, length, rep, model, mesh, an, T } = M;
+  const tRep = performance.now();
+  const { found, cuts, red, same } = acceptSuggestions(M, opts);
+  const tChk = performance.now();
+  const res = buildJoints(wasm, model, mesh, an, cuts, opts);
   const t1 = performance.now();
 
   const chains = new Set(cuts.map((c) => c.chain)).size;
-  console.log(`\n${name} — длина ${length.toFixed(0)} мм, ветвей ${chains}, разрезов ${cuts.length}, звеньев ${res.joints.length}, деталей ${res.parts.length}, ${Math.round(t1 - t0)} мс (починка ${Math.round(tRep - t0)})`);
-  console.log('  ' + res.summary + (found.small ? ' · «сделай крупнее»' : '') + (res.skipped.length ? ` · пропущено автоматических: ${res.skipped.length}` : '') +
-    (found.thin.length ? ` · тонко (сустав не прячется): ${found.thin.length} мест` : ''));
+  console.log(`\n${name} — длина ${length.toFixed(0)} мм, ветвей ${chains}, разрезов ${cuts.length}, звеньев ${res.joints.length}, деталей ${res.parts.length}, ${Math.round(t1 - t0)} мс (починка ${Math.round(tRep - t0)}, проверка разрезов ${Math.round(tChk - tRep)}, сборка ${Math.round(t1 - tChk)})`);
+  console.log('  ' + res.summary + (found.small ? ' · «сделай крупнее»' : '') + ` · предложено ${found.cuts.length} + тонко ${found.thin.length}` +
+    (red.length ? ` · красных после тапа: ${red.length} (${red.join(', ')})` : ''));
   res.notes.forEach((x) => console.log('   ' + (x.level === 'error' ? '✖ ' : '⚠ ') + x.text));
 
   ok('после починки — одна деталь', rep.parts === 1, rep.parts);
+  ok('«✨ Предложить»: точки есть', found.cuts.length + found.thin.length > 0, found.cuts.length + ' + ' + found.thin.length);
+  ok('тап по точке-предложению ставит разрез ровно в неё', same);
+  ok('зелёных разрезов из предложенных — не меньше 80 %', cuts.length >= 0.8 * found.cuts.length, cuts.length + ' из ' + found.cuts.length);
   if (expect.small != null) {
     ok(expect.small ? 'подсказка «Сделай фигурку крупнее» — суставы помещаются не везде' : 'подсказки «сделай крупнее» нет — суставы помещаются',
       found.small === expect.small, found.small);
@@ -170,7 +211,7 @@ function run(name, stl, expect) {
   if (expect.noLinks) {
     // кости тоньше любого сустава: на лапах звеньев нет, все места отмечены серым; режется только тело
     ok('на тонких костях звеньев нет (только позвоночник)', cuts.every((c) => c.spine), cuts.filter((c) => !c.spine).length);
-    ok('тонкие места отмечены (серые точки)', found.thin.length >= expect.noLinks, found.thin.length);
+    ok('тонкие места — серые точки-предложения', found.thin.length >= expect.noLinks, found.thin.length);
   }
   if (expect.classify) expect.classify(cuts, an, length / base.length, rep, found);
   const errors = res.notes.filter((x) => x.level === 'error');
@@ -185,13 +226,11 @@ function run(name, stl, expect) {
   }
   ok('никакие две детали не пересекаются', maxI < 1e-6, maxI);
   ok('поворот на ±α свободен', !warns.some((x) => /упирается/.test(x.text)), warns.filter((x) => /упирается/.test(x.text)).map((x) => x.text));
-  ok('нет пропущенных разрезов и висящих деталей', !warns.some((x) => /пропущен|висит/.test(x.text)), warns.map((x) => x.text));
+  ok('нет висящих деталей', !warns.some((x) => /висит/.test(x.text)), warns.map((x) => x.text));
   skinCheck(res.parts, model);
   skinInCheck(res.joints, rep.skinIn);
-  // точки модели (как она построена) → после «масштаб, центр в (0,0), срез низа 1 мм»
-  const b0 = base.manifold.boundingBox(), sc = length / base.length;
-  const T = (x, y, z) => [(x - (b0.min[0] + b0.max[0]) / 2) * sc, (y - (b0.min[1] + b0.max[1]) / 2) * sc, (z - b0.min[2]) * sc - 1];
   if (expect.after) expect.after(res, an, T);
+  if (expect.snap) expect.snap(M, opts);
   const vols = res.parts.map((p) => p.manifold.volume());
   ok('нет деталей меньше 20 мм³', vols.every((v) => v >= 20), 'мин. ' + Math.min(...vols).toFixed(0) + ' мм³');
   ok('деталей = звеньев + 1', res.parts.length === res.joints.length + 1, [res.parts.length, res.joints.length]);
@@ -203,9 +242,7 @@ function run(name, stl, expect) {
   ok('STL открывается заново и меньше 12 МБ', back.length / 9 === new DataView(file).getUint32(80, true) && file.byteLength < 12 * 1048576,
     (file.byteLength / 1048576).toFixed(2) + ' МБ');
   res.parts.forEach((p) => p.manifold.delete());
-  model.delete();
-  rep.skinIn.delete();
-  base.manifold.delete();
+  M.free();
   return res;
 }
 
@@ -228,8 +265,8 @@ const animal = (minTail) => (cuts, an, s) => {
       legs[side] = (legs[side] || 0) + n;
     }
   });
-  // хвост — звенья позвоночника позади задних лап
-  const rear = cuts.filter((c) => !c.spine && c.root && c.P[0] < cx).map((c) => c.P[0]);
+  // хвост — звенья позвоночника позади задних лап (первое звено каждой лапы — у тела: разрезы идут в порядке сборки)
+  const rear = perChain(cuts.filter((c) => !c.spine)).map((x) => x.first).filter((c) => c.P[0] < cx).map((c) => c.P[0]);
   const hip = rear.length ? Math.min(...rear) : cx - 30 * s;
   const tail = cuts.filter((c) => c.spine && c.P[0] < hip - 3);
   ok('на каждой из 4 лап ≥ 1 звено', Object.keys(legs).length === 4 && Object.values(legs).every((n) => n >= 1), legs);
@@ -292,10 +329,11 @@ const catLegs = (res, an, T) => {
 // Полные цепочки проверяем на том размере, где сустав помещается (от 18 см, как и советует подсказка).
 const MODELS = {
   // щупальца сужаются к кончику: даже при 250 мм сустав влезает на первые ~3 звена каждого
-  octopus: () => ({ m: octopus(), expect: { classify: arms(3), length: 250, small: false, maxMs: 60000 } }),
-  cat: () => ({ m: cat(), expect: { classify: catCheck, after: catLegs, length: 250, small: false, maxMs: 60000 } }),
-  snake: () => ({ m: snake().m, expect: { classify: snakeCheck, length: 180, maxMs: 45000 } }),
-  lizard: () => ({ m: lizard(), expect: { classify: animal(3), length: 180, small: false, maxMs: 45000 } }),
+  // время — с проверкой каждого разреза (как на экране после тапа) и сборкой
+  octopus: () => ({ m: octopus(), expect: { classify: arms(3), length: 250, small: false, maxMs: 90000 } }),
+  cat: () => ({ m: cat(), expect: { classify: catCheck, after: catLegs, length: 250, small: false, maxMs: 75000 } }),
+  snake: () => ({ m: snake().m, expect: { classify: snakeCheck, length: 180, maxMs: 60000 } }),
+  lizard: () => ({ m: lizard(), expect: { classify: animal(3), length: 180, small: false, maxMs: 60000 } }),
   // кости скелета (полуширина ~2 мм) тоньше любого спрятанного сустава: на них звеньев нет, 4 лапы — серым
   skeleton: () => ({ m: skeleton(), expect: { noLinks: 4, small: true, maxMs: 30000 } }),
 };
@@ -378,6 +416,87 @@ function jointBar(W, H) {
   bar.delete();
 }
 
+/* Разрезы рукой на ящерице с сужающимся хвостом (220 мм): без разрезов собирать нечего; тап посередине хвоста —
+   зелёный разрез и STL из 2 деталей (держит в 6 сторон, поворот ±α свободен); тап у тонкого кончика — красный
+   с причиной; мимо фигурки — ничего; разрез ближе 2 мм к соседнему (по кружкам суставов) — «слишком близко». */
+function taps() {
+  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
+  const m = newt();
+  const stl = writeSTL([meshOf(m)]);
+  m.delete();
+  fs.writeFileSync(path.join(OUT, 'newt.stl'), Buffer.from(stl));
+  const M = prepare(stl, 220);
+  const { an, model, mesh, T } = M;
+  console.log('\nразрезы рукой — ящерица с сужающимся хвостом, 220 мм');
+  const empty = buildJoints(wasm, model, mesh, an, [], opts);
+  ok('без разрезов — одна деталь, суставов нет (экран держит «Собрать STL» неактивной)', empty.parts.length === 1 && empty.joints.length === 0, empty.parts.length);
+  empty.parts.forEach((p) => p.manifold.delete());
+
+  // середина хвоста (в модели хвост — от x = −26 до −100)
+  const mid = T(-60, 0);
+  const c = placeCut(an, opts, mid[0], mid[1] + 2); // палец чуть мимо оси — разрез всё равно на скелете
+  ok('тап по середине хвоста — разрез на позвоночнике, поперёк хвоста', c && c.spine && Math.abs(c.P[1]) < 1 && Math.abs(c.n[0]) > 0.95,
+    c && { P: c.P.map((v) => +v.toFixed(1)), n: c.n.map((v) => +v.toFixed(2)) });
+  const t0 = performance.now();
+  const v = checkCut(wasm, model, mesh, an, c, opts);
+  const tc = performance.now() - t0;
+  ok('…он зелёный: сустав помещается, держит, поворачивается, ничего не отрезал', c.fit && v.ok, v);
+  ok('проверка одного разреза быстрее 3 с', tc < 3000, Math.round(tc) + ' мс');
+  const res = buildJoints(wasm, model, mesh, an, [Object.assign(c, { id: 1 })], opts);
+  const J = res.joints[0];
+  ok('STL из 2 деталей, ошибок нет', res.parts.length === 2 && !res.notes.some((x) => x.level === 'error'), res.notes.map((x) => x.text));
+  ok('сустав держит: сдвиг на 1 мм в 6 сторон задевает соседа', !!(J && J.hold));
+  ok('поворот на ±α свободен', !!J && J.turn <= 0.5, J && J.turn.toFixed(3));
+  ok('зазор ≥ 0.9·g', !!J && J.gap >= 0.9 * opts.g, J && J.gap.toFixed(3));
+  const file = writeSTL(res.parts.map((p) => meshOf(p.manifold)));
+  ok('STL читается заново', parseSTL(file).length / 9 === new DataView(file).getUint32(80, true));
+  res.parts.forEach((p) => p.manifold.delete());
+
+  // кончик хвоста — тонко
+  const tip = T(-97, 0);
+  const ct = placeCut(an, opts, tip[0], tip[1]);
+  const vt = ct && (ct.fit ? checkCut(wasm, model, mesh, an, ct, opts) : { ok: false, why: ct.why });
+  ok('тап по тонкому кончику хвоста — красный разрез: «' + THIN_WHY + '»', !!ct && !vt.ok && vt.why === THIN_WHY, vt);
+
+  ok('тап мимо фигурки — разреза нет', placeCut(an, opts, mid[0], mid[1] + 60) === null);
+
+  const c2 = placeCut(an, opts, c.P[0] - 6, c.P[1]);
+  ok('разрез в 6 мм от соседнего — слишком близко (кружки ближе 2 мм)', !!c2 && tooClose(c, c2));
+  const c3 = placeCut(an, opts, c.P[0] + c.Rh * 2 + 3, c.P[1], 0, false);
+  ok('в 2·Rh + 3 мм — не слишком близко', !!c3 && !tooClose(c, c3), c3 && (Math.hypot(c3.P[0] - c.P[0], c3.P[1] - c.P[1]) - c.Rh - c3.Rh).toFixed(1) + ' мм между кружками');
+  M.free();
+}
+
+// Бороздка (у геккона от бота — прорези между сегментами) ближе 3 мм притягивает разрез, дальше — нет.
+const snapCheck = (M, opts) => {
+  const { an } = M;
+  const L = limbsOf(an);
+  let hit = null;
+  an.branches.forEach((br, bi) => {
+    if (hit || L.from[bi] < 0) return;
+    const gs = branchGrooves(an, br).filter((j) => j >= L.from[bi]);
+    for (const j of gs) {
+      const s = br.cum[j] + 2;
+      if (s < br.cum[br.cum.length - 1] - 1 && gs.every((k) => k === j || Math.abs(br.cum[k] - s) > 3.5)) { hit = { bi, j, gs, s }; break; }
+    }
+  });
+  ok('у модели есть бороздки', !!hit);
+  if (!hit) return;
+  const br = an.branches[hit.bi];
+  const at = (s) => br.cum.findIndex((c) => c >= s);
+  const k = at(hit.s), p = br.pts[k];
+  const c = placeCut(an, opts, p[0], p[1], hit.bi);
+  ok('тап в 2 мм от бороздки — разрез притянулся к ней', !!c && c.groove && Math.abs(c.s - br.cum[hit.j]) < 1e-6, c && (c.s - br.cum[hit.j]).toFixed(2));
+  const c0 = placeCut(an, opts, p[0], p[1], hit.bi, false);
+  ok('без притягивания — там, куда тапнули', !!c0 && !c0.groove && Math.abs(c0.s - br.cum[k]) < 1e-6);
+  let kf = -1;
+  for (let i = L.from[hit.bi]; i < br.cum.length && kf < 0; i++) if (hit.gs.every((j) => Math.abs(br.cum[j] - br.cum[i]) > 3.3)) kf = i;
+  if (kf >= 0) {
+    const cf = placeCut(an, opts, br.pts[kf][0], br.pts[kf][1], hit.bi);
+    ok('дальше 3 мм от бороздок — не притягивает', !!cf && !cf.groove && Math.abs(cf.s - br.cum[kf]) < 1e-6);
+  }
+};
+
 // Кот на 163 мм (как построен): лапы и хвост r = 5 мм тоньше сустава — подсказка «сделай крупнее».
 function hintAt(name, m, length) {
   const stl = writeSTL([meshOf(m)]);
@@ -399,6 +518,7 @@ function hintAt(name, m, length) {
 const T0 = performance.now();
 if (!ONLY || ONLY.includes('hint')) { const m = cat(); hintAt('кот', m, 163); m.delete(); }
 if (!ONLY || ONLY.includes('joint')) { jointBar(13, 10.5); jointBar(16, 11); }
+if (!ONLY || ONLY.includes('taps')) taps();
 for (const [name, mk] of Object.entries(MODELS)) {
   if (ONLY && !ONLY.includes(name)) continue;
   const { m, expect } = mk();
@@ -411,7 +531,7 @@ for (const [name, mk] of Object.entries(MODELS)) {
 // Этот эублефар — уже подвижная модель: тело порезано прорезями на сегменты 13–17 мм, а внутри — полости
 // под старые суставы. Новый сустав (≈ 18 мм вдоль тела, со стенкой 0.8 мм) между ними не помещается —
 // звеньев нет, приложение показывает «Сделай фигурку крупнее». Проверяем, что ничего не вылезло и подсказка есть.
-const REAL = { gecko: { length: 150, small: true, maxMs: 45000 } };
+const REAL = { gecko: { length: 150, small: true, snap: snapCheck, maxMs: 45000 } };
 for (const f of fs.readdirSync(HERE).filter((x) => /\.stl$/i.test(x))) {
   const name = f.replace(/\.stl$/i, '');
   if (ONLY && !ONLY.includes(name) && !ONLY.includes(f)) continue;

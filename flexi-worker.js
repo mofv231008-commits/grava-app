@@ -2,7 +2,8 @@
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=9';
+  limbsOf, placeCut, checkCut,
+} from './flexi-core.js?v=10';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
@@ -18,8 +19,42 @@ function getWasm() {
   return wasmPromise;
 }
 
+// Проверки разрезов — в очереди: пока считается одна, человек мог сдвинуть или убрать разрез —
+// тогда старая проверка не нужна (latest[key] — последняя версия разреза, о которой знает поток).
+const checks = [];
+const latest = {};
+let pumping = false;
+function pump() {
+  if (pumping) return;
+  pumping = true;
+  setTimeout(async () => {
+    const msg = checks.shift();
+    try {
+      if (!msg) return;
+      if (!model || !an || (latest[msg.key] != null && latest[msg.key] > msg.ver)) {
+        self.postMessage({ type: 'checked', id: msg.id, stale: true });
+        return;
+      }
+      const wasm = await getWasm();
+      const r = checkCut(wasm, model, mesh, an, msg.cut, msg.opts, msg.prev || null);
+      self.postMessage({ type: 'checked', id: msg.id, ok: r.ok, code: r.code, why: r.why });
+    } catch (err) {
+      self.postMessage({ type: 'error', id: msg.id, op: 'check', code: (err && err.code) || 'failed', text: String((err && err.message) || err) });
+    } finally {
+      pumping = false;
+      if (checks.length) pump();
+    }
+  }, 0);
+}
+const dropChecks = () => {
+  checks.splice(0).forEach((m) => self.postMessage({ type: 'checked', id: m.id, stale: true }));
+};
+
 self.onmessage = async (e) => {
   const msg = e.data || {};
+  if (msg.key != null && msg.ver != null) latest[msg.key] = Math.max(latest[msg.key] || 0, msg.ver);
+  if (msg.type === 'check') { checks.push(msg); pump(); return; }
+  if (msg.type === 'drop') return; // разрез убрали — его проверки в очереди устарели
   try {
     const wasm = await getWasm();
     if (msg.type === 'load') {
@@ -31,6 +66,7 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'loaded', id: msg.id, length: r.length, tris: soup.length / 9 });
     } else if (msg.type === 'prepare') {
       if (!base) throw new FlexiError('no_model');
+      dropChecks();
       if (model) { model.delete(); model = null; }
       if (an && an.skinIn) { an.skinIn.delete(); an.skinIn = null; }
       const placed = placeModel(wasm, base, msg.length, msg.cut);
@@ -54,14 +90,29 @@ self.onmessage = async (e) => {
         skeleton.set([s.x, s.y, s.dt, s.parent, s.dist], k * 5);
       });
       const heights = an.heights.slice();
+      // ветви, по которым можно резать: экран тянет разрез вдоль них
+      const L = limbsOf(an);
+      const branches = [];
+      an.branches.forEach((br, i) => {
+        if (L.from[i] < 0) return;
+        const pts = new Float32Array(br.pts.length * 2);
+        br.pts.forEach((q, k) => { pts[k * 2] = q[0]; pts[k * 2 + 1] = q[1]; });
+        branches.push({ i, from: L.from[i], pts, spine: L.spine && i === 0 });
+      });
       self.postMessage({
-        type: 'prepared', id: msg.id, grid: an.grid, heights, skeleton, zMax: an.zMax,
+        type: 'prepared', id: msg.id, grid: an.grid, heights, skeleton, zMax: an.zMax, branches, legs: L.legs,
         core: an.core, bbox: { min: bb.min, max: bb.max }, length: msg.length, parts: rep.parts,
-      }, [heights.buffer, skeleton.buffer]);
+      }, [heights.buffer, skeleton.buffer, ...branches.map((b) => b.pts.buffer)]);
     } else if (msg.type === 'auto') {
+      // предложения для «✨ Предложить»: где сустав помещается (fit) и где он нужен, но тонко
       if (!an) throw new FlexiError('no_model');
       const r = autoCuts(an, msg.opts);
-      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin, legs: r.legs, small: r.small });
+      const sugg = r.cuts.map((c) => ({ P: c.P, br: c.br, fit: true })).concat(r.thin.map((c) => ({ P: c.P, br: c.br, fit: false })));
+      self.postMessage({ type: 'sugg', id: msg.id, sugg, legs: r.legs, small: r.small });
+    } else if (msg.type === 'place') {
+      if (!an) throw new FlexiError('no_model');
+      const c = placeCut(an, msg.opts, msg.x, msg.y, msg.br == null ? null : msg.br, msg.snap !== false);
+      self.postMessage({ type: 'placed', id: msg.id, cut: c });
     } else if (msg.type === 'build') {
       if (!model) throw new FlexiError('no_model');
       const opts = msg.opts;
@@ -92,7 +143,6 @@ self.onmessage = async (e) => {
       });
       self.postMessage({
         type: 'built', id: msg.id, parts, joints: res.joints, notes: res.notes, redIds: res.redIds,
-        skipped: res.skipped, skipWhy: res.skipWhy, moved: res.moved,
         summary: res.summary, num: res.num, order: cuts.map((c) => c.id), stl,
         chains: Object.values(chains),
       }, transfer);

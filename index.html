@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -107,19 +107,21 @@
         </div>
 
         <div id="flexi-editor" hidden>
+          <p class="flexi-lead" id="flexi-lead">Тапни по фигурке там, где она должна гнуться. Обычно это шея, основания лап и 2–4 места на хвосте</p>
           <div class="flexi-top" id="flexi-top">
             <canvas id="flexi-canvas"></canvas>
+            <div class="flexi-pop" id="flexi-pop" hidden>
+              <button type="button" class="btn btn-secondary" id="flexi-pop-remove">🗑 Убрать</button>
+            </div>
           </div>
-          <p class="flexi-skipped" id="flexi-skipped" hidden></p>
-          <p class="flexi-skipped" id="flexi-thin" hidden>Лапы тонкие — сустав не спрячется. Увеличь длину фигурки</p>
           <p class="flexi-size" id="flexi-small-joints" hidden>На таком размере суставы помещаются не везде. Сделай фигурку крупнее — от 18 см</p>
           <p class="flexi-count" id="flexi-count"></p>
+          <div class="flexi-cut-notes" id="flexi-cut-notes"></div>
           <div class="flexi-tools">
-            <button type="button" class="btn btn-secondary" id="flexi-remove" disabled>🗑 Убрать</button>
-            <button type="button" class="btn btn-secondary" id="flexi-add">＋ Звено</button>
-            <button type="button" class="btn btn-secondary" id="flexi-auto">↺ Авто</button>
+            <button type="button" class="btn btn-secondary" id="flexi-suggest">✨ Предложить</button>
+            <button type="button" class="btn btn-secondary" id="flexi-reset" disabled>↺ Сбросить</button>
           </div>
-          <p class="ed-tip" id="flexi-tip"></p>
+          <p class="ed-tip" id="flexi-tip">Зелёный разрез — сустав получится, красный — нет (причина под картинкой). Тяни разрез — он едет вдоль позвоночника. Тап по разрезу — «Убрать».</p>
 
           <details class="flexi-settings">
             <summary>Настройки</summary>
@@ -153,12 +155,12 @@
           </details>
           <p class="flexi-size" id="flexi-size" hidden>Для подвижных лучше 15–20 см — звеньев будет больше</p>
 
-          <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build">🔧 Собрать</button>
+          <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build" disabled>🔧 Собрать STL</button>
 
           <div id="flexi-result" hidden>
             <h2 class="section-title">Что получилось</h2>
             <div class="flexi-summary" id="flexi-summary"></div>
-            <p class="flexi-stale" id="flexi-result-stale" hidden>Звенья или настройки поменялись — нажми «🔧 Собрать» ещё раз</p>
+            <p class="flexi-stale" id="flexi-result-stale" hidden>Разрезы или настройки поменялись — нажми «🔧 Собрать STL» ещё раз</p>
             <div class="cad-preview flexi-3d" id="flexi-3d"></div>
             <p class="cad-dims" id="flexi-parts"></p>
             <button type="button" class="btn btn-secondary btn-wide" id="flexi-wiggle">🦎 Пошевелить</button>
@@ -335,6 +337,6 @@
   <script src="app.js?v=8"></script>
   <script src="editor.js?v=6"></script>
   <script src="cad.js?v=1"></script>
-  <script src="flexi.js?v=9"></script>
+  <script src="flexi.js?v=10"></script>
 </body>
 </html>

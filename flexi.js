@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=9';
-const FLEXI_CORE_URL = './flexi-core.js?v=9';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=10';
+const FLEXI_CORE_URL = './flexi-core.js?v=10';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -46,15 +46,17 @@ function openFlexi(id) {
     kBody: 0.5, // звенья позвоночника внутри тела — короче (тело широкое)
     alphaSeg: 20, // «ушко в петле» свободно ходит на ±20°
     prep: null,
-    cuts: [],
-    edited: false,
+    paths: null,
+    cuts: [], // разрезы ставит человек: тап по фигурке; на старте — ни одного
     nextId: 1,
-    selected: null,
-    addMode: false,
+    menu: null, // разрез, у которого открыто меню «Убрать»
+    sugg: null, // предложения автопоиска — точки для «✨ Предложить»
+    showSugg: false,
+    suggSeq: 0,
+    legs: null,
     built: null,
     stale: true,
     prepTimer: 0,
-    autoSeq: 0,
   };
 
   $('flexi-missing').hidden = true;
@@ -62,9 +64,8 @@ function openFlexi(id) {
   $('flexi-title').textContent = 'Загружаю модель…';
   $('flexi-warn-pose').hidden = true;
   $('flexi-warn-parts').hidden = true;
-  $('flexi-skipped').hidden = true;
-  $('flexi-thin').hidden = true;
   $('flexi-small-joints').hidden = true;
+  $('flexi-pop').hidden = true;
   $('flexi-status').hidden = false;
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
@@ -155,24 +156,6 @@ function flexiOpts(f) {
   return { g: f.g, alphaSeg: f.alphaSeg, k: f.k, kBody: f.kBody };
 }
 
-// размеры сустава для экрана (точно — с высотой по мешу — считает поток при сборке)
-function flexiDims(f, c) {
-  return f.core.jointDims(flexiOpts(f), c.w, flexiZtop(f, c.P[0], c.P[1]));
-}
-
-// Верх модели в радиусе 3 мм — по картинке высот (точное значение считает поток при сборке).
-function flexiZtop(f, x, y) {
-  const g = f.prep.grid, h = f.prep.heights;
-  const cx = (x - g.x0) / g.step - 0.5, cy = (y - g.y0) / g.step - 0.5, rp = 3 / g.step;
-  let best = 0;
-  for (let py = Math.max(0, Math.floor(cy - rp)); py <= Math.min(g.H - 1, Math.ceil(cy + rp)); py++) {
-    for (let px = Math.max(0, Math.floor(cx - rp)); px <= Math.min(g.W - 1, Math.ceil(cx + rp)); px++) {
-      if ((px - cx) ** 2 + (py - cy) ** 2 <= rp * rp && h[py * g.W + px] > best) best = h[py * g.W + px];
-    }
-  }
-  return best ? ((best - 40) / 215) * f.prep.zMax : 0;
-}
-
 /* ---------- Фоновый поток ---------- */
 
 function flexiWorker(f) {
@@ -182,7 +165,7 @@ function flexiWorker(f) {
   w.onmessage = (e) => {
     const msg = e.data || {};
     if (msg.type === 'progress' && (msg.phase === 'repair' || msg.phase === 'analyze')) {
-      $('flexi-status-text').textContent = msg.phase === 'repair' ? 'Чиню модель…' : 'Ищу суставы…';
+      $('flexi-status-text').textContent = msg.phase === 'repair' ? 'Чиню модель…' : 'Смотрю, где гнётся…';
       return;
     }
     if (msg.type === 'progress') {
@@ -265,7 +248,7 @@ async function flexiDownload(f) {
   await flexiPrepare(f, true);
 }
 
-/* ---------- Подготовка и автопоиск ---------- */
+/* ---------- Подготовка и предложения ---------- */
 
 async function flexiPrepare(f, first) {
   $('flexi-status').hidden = false;
@@ -284,17 +267,32 @@ async function flexiPrepare(f, first) {
   r.skel = [];
   for (let k = 0; k < sk.length / 5; k++) r.skel.push({ x: sk[k * 5], y: sk[k * 5 + 1], dt: sk[k * 5 + 2], parent: sk[k * 5 + 3], dist: sk[k * 5 + 4] });
   f.prep = r;
+  // ветви, по которым можно резать (позвоночник и лапы): разрез тянется вдоль них
+  f.paths = new Map();
+  r.branches.forEach((b) => {
+    const n = b.pts.length / 2, cum = new Float32Array(n);
+    for (let k = 1; k < n; k++) cum[k] = cum[k - 1] + Math.hypot(b.pts[k * 2] - b.pts[k * 2 - 2], b.pts[k * 2 + 1] - b.pts[k * 2 - 1]);
+    f.paths.set(b.i, { pts: b.pts, cum, from: b.from, spine: b.spine });
+  });
+  f.legs = r.legs;
   // после починки остались крупные отдельные куски — они не соединены с телом
   const warnParts = $('flexi-warn-parts');
   warnParts.hidden = !(r.parts > 1);
   if (r.parts > 1) warnParts.textContent = 'Модель из ' + r.parts + ' ' + plural(r.parts, 'части', 'частей', 'частей') + ' — куски, не связанные с телом, останутся отдельными';
-  if (f.edited && oldLen && r.length !== oldLen) {
-    const k = r.length / oldLen; // модель отцентрована в (0,0) — разрезы масштабируются вместе с ней
-    f.cuts.forEach((c) => { c.P = [c.P[0] * k, c.P[1] * k]; c.w *= k; });
-  }
-  if (!f.edited) await flexiAuto(f, true);
-  f.stale = true;
+  // предложения (и подсказка «сделай крупнее») — для нового размера
+  f.sugg = null;
+  await flexiSuggest(f);
   if (state.flexi !== f) return;
+  // размер поменялся: модель отцентрована в (0,0) — разрезы едут вместе с ней и ставятся заново (суставы другие)
+  if (f.cuts.length && oldLen && r.length !== oldLen) {
+    const k = r.length / oldLen;
+    f.cuts.forEach((c) => {
+      c.P = [c.P[0] * k, c.P[1] * k];
+      c.Rh *= k;
+      flexiPlace(f, c, c.P[0], c.P[1], null, true, false);
+    });
+  }
+  f.stale = true;
   $('flexi-status').hidden = true;
   $('flexi-editor').hidden = false;
   flexiLayoutCanvas();
@@ -302,29 +300,21 @@ async function flexiPrepare(f, first) {
   flexiUpdateMainButton();
 }
 
-async function flexiAuto(f, silent) {
+// Предложения автопоиска (скелет, бороздки, корни ветвей) — только точки для «✨ Предложить», не разрезы.
+async function flexiSuggest(f) {
   if (!f.prep) return;
-  const seq = ++f.autoSeq;
+  const seq = ++f.suggSeq;
   let r;
   try {
     r = await flexiCall(f, { type: 'auto', opts: flexiOpts(f) });
   } catch (err) {
     return;
   }
-  if (state.flexi !== f || seq !== f.autoSeq) return;
-  // auto — поставлен автопоиском: если не режется, сборщик сдвинет его или тихо пропустит
-  f.cuts = r.cuts.map((c) => ({ id: f.nextId++, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: true, br: c.br, s: c.s, root: c.root, spine: c.spine }));
-  f.edited = false;
-  $('flexi-skipped').hidden = true;
-  // места, где сустав не помещается внутри (тонкие лапки, кончик хвоста) — серые точки на виде сверху
-  f.thin = r.thin || [];
-  f.legs = r.legs; // сколько лап у фигурки (со звеньями или цельных)
+  if (state.flexi !== f || seq !== f.suggSeq) return;
+  f.sugg = r.sugg;
   // суставы с минимумами в мм: на маленькой фигурке хвосту и лапам их не хватает — просим сделать крупнее
   $('flexi-small-joints').hidden = !r.small;
-  $('flexi-thin').hidden = !f.thin.length;
-  f.selected = null;
-  flexiInvalidate();
-  if (!silent) flexiDraw();
+  flexiDraw();
 }
 
 function flexiInvalidate() {
@@ -335,20 +325,138 @@ function flexiInvalidate() {
   flexiUpdateMainButton();
 }
 
-// Настройка поменялась: если звенья не трогали руками — переставим их заново (размеры другие).
-function flexiSettingChanged() {
+// Зазор или гибкость поменялись: суставы другие — разрезы проверяются заново, предложения тоже.
+function flexiSettingChanged(recheck) {
   const f = state.flexi;
   if (!f) return;
   flexiRenderSettings();
-  flexiInvalidate();
   if (!f.prep) return;
-  if (!f.edited) flexiAuto(f, false);
-  else flexiDraw();
+  flexiSuggest(f);
+  if (recheck) {
+    flexiInvalidate();
+    f.cuts.forEach((c) => flexiPlace(f, c, c.P[0], c.P[1], c.br, false, false));
+  }
+  flexiDraw();
+}
+
+/* ---------- Разрезы: поставить и проверить ---------- */
+
+// Данные разреза для потока.
+function flexiCutMsg(c) {
+  return { id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain, br: c.br, s: c.s, root: !!c.root, spine: !!c.spine };
+}
+
+// Без ответа: поток только помечает старые проверки разреза ненужными.
+function flexiPost(f, msg) {
+  try { flexiWorker(f).postMessage(msg); } catch (e) { /* поток уже закрыт */ }
+}
+
+// Новый разрез там, куда тапнули (или из точки-предложения). Пока поток не ответил — серый.
+function flexiAddCut(f, x, y, br, snap) {
+  const near = flexiNearestSkel(f, x, y);
+  const s = near ? f.prep.skel[near.k] : { x, y };
+  const c = {
+    id: f.nextId++, P: [s.x, s.y], n: near ? flexiSkelDir(f, near.k) : [1, 0], w: 3, Rh: 0,
+    br, s: Infinity, chain: -1, spine: false, root: false, st: 'wait', why: '', ver: 0,
+  };
+  f.cuts.push(c);
+  f.menu = null;
+  haptic('medium');
+  flexiInvalidate();
+  flexiDraw();
+  flexiPlace(f, c, x, y, br, snap, true);
+  return c;
+}
+
+// Разрез ближе к телу на той же цепочке: проверяется вместе с этим (звено между ними — как при сборке).
+function flexiPrevCut(f, c) {
+  const b = f.paths && f.paths.get(c.br);
+  return f.core.prevCut(f.cuts, c, (P) => {
+    if (!b) return false;
+    for (let k = 0; k < b.pts.length; k += 2) if (Math.hypot(b.pts[k] - P[0], b.pts[k + 1] - P[1]) < 1.5) return true;
+    return false;
+  });
+}
+
+// Разрез поставили, сдвинули или убрали — дальше по цепочке (от s0) звено ближе к телу у разрезов поменялось.
+function flexiRecheckChain(f, c, s0) {
+  f.cuts.forEach((o) => {
+    if (o !== c && o.chain === c.chain && o.Rh > 0 && o.s > s0) flexiPlace(f, o, o.P[0], o.P[1], o.br, false, false);
+  });
+}
+
+/* Поставить разрез (поперёк ветви в ближайшей точке скелета, к бороздке ближе 3 мм — притянуть) и проверить:
+   сначала быстро — по размерам сустава и запасу от кожи, потом булевыми операциями на целой модели (держит в 6 сторон,
+   поворачивается, ничего не отрезал) — вместе с разрезом ближе к телу на той же цепочке. Сдвинули или убрали,
+   пока считалось, — старый ответ не нужен (c.ver). cascade — разрез поставили или сдвинули рукой: разрезы дальше
+   по цепочке проверяются заново. */
+async function flexiPlace(f, c, x, y, br, snap, cascade) {
+  const ver = ++c.ver;
+  const oldS = c.s, oldChain = c.chain;
+  c.st = 'wait';
+  c.why = '';
+  const fresh = () => state.flexi === f && c.ver === ver && f.cuts.indexOf(c) !== -1;
+  const bad = (why) => { c.st = 'bad'; c.why = why; flexiDraw(); };
+  let r;
+  try {
+    r = await flexiCall(f, { type: 'place', key: c.id, ver, x, y, br, snap, opts: flexiOpts(f) });
+  } catch (err) {
+    if (fresh()) bad('не получилось проверить — сдвинь разрез');
+    return;
+  }
+  if (!fresh()) return;
+  if (!r.cut) {
+    // мимо шеи, лап и хвоста (середина круглого тела, фон)
+    flexiDropCut(f, c);
+    toast('Тут не гнётся — тапни по шее, лапе или хвосту');
+    return;
+  }
+  Object.assign(c, r.cut);
+  if (cascade) {
+    if (oldChain >= 0 && oldChain !== c.chain) flexiRecheckChain(f, { chain: oldChain }, oldS);
+    flexiRecheckChain(f, c, Math.min(oldS, c.s));
+  }
+  if (!r.cut.fit) { bad(r.cut.why); return; }
+  flexiDraw();
+  const prev = flexiPrevCut(f, c);
+  let v;
+  try {
+    v = await flexiCall(f, { type: 'check', key: c.id, ver, cut: flexiCutMsg(c), prev: prev && flexiCutMsg(prev), opts: flexiOpts(f) });
+  } catch (err) {
+    if (fresh()) bad('не получилось проверить — сдвинь разрез');
+    return;
+  }
+  if (!fresh() || v.stale) return;
+  if (v.ok) { c.st = 'ok'; c.why = ''; flexiDraw(); } else bad(v.why);
+}
+
+function flexiDropCut(f, c, cascade = true) {
+  f.cuts = f.cuts.filter((x) => x !== c);
+  if (f.menu === c.id) f.menu = null;
+  flexiPost(f, { type: 'drop', key: c.id, ver: ++c.ver });
+  if (cascade && c.Rh > 0) flexiRecheckChain(f, c, c.s);
+  flexiInvalidate();
+  flexiDraw();
+}
+
+// Зелёный, красный или «проверяю»: зелёный рядом с соседом (кружки ближе 2 мм) — тоже красный.
+function flexiCutState(f, c) {
+  if (c.st !== 'ok') return c.st;
+  return f.cuts.some((o) => o !== c && o.Rh > 0 && f.core.tooClose(c, o)) ? 'near' : 'ok';
+}
+function flexiCutWhy(f, c) {
+  const st = flexiCutState(f, c);
+  return st === 'near' ? f.core.NEAR_WHY : st === 'bad' ? c.why : '';
+}
+// «Собрать STL» — когда есть хотя бы один разрез и все зелёные.
+function flexiCanBuild(f) {
+  return !!(f && f.prep && f.cuts.length && f.cuts.every((c) => flexiCutState(f, c) === 'ok'));
 }
 
 /* ---------- Вид сверху ---------- */
 
 const flexiView = { img: null, k: 1, ox: 0, oy: 0, drag: null, dpr: 1 };
+const FLEXI_GREEN = '#34c759';
 
 function flexiLayoutCanvas() {
   const f = state.flexi;
@@ -402,13 +510,10 @@ function flexiOrdered(f) {
   return f.core.orderCuts(f.cuts, f.prep.skel);
 }
 
-// Половина черты поперёк ветви; ручка поворота — на её конце.
-function flexiHalfBar(f, c) {
-  return Math.max(c.w, flexiDims(f, c).Rh) + 2;
-}
-function flexiHandle(f, c) {
-  const L = flexiHalfBar(f, c);
-  return [c.P[0] - c.n[1] * L, c.P[1] + c.n[0] * L];
+// Кружок сустава (радиус Rh; пока поток не ответил — 6 мм) и черта поперёк ветви.
+const flexiR = (c) => c.Rh || 6;
+function flexiHalfBar(c) {
+  return Math.max(c.w, flexiR(c)) + 2;
 }
 
 function flexiDraw() {
@@ -420,56 +525,53 @@ function flexiDraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const g = f.prep.grid;
   ctx.drawImage(flexiView.img, flexiView.ox, flexiView.oy, g.W * flexiView.k, g.H * flexiView.k);
-
-  // серые точки — тут сустав внутри не помещается
-  (f.thin || []).forEach((q) => {
-    const [px, py] = flexiToScreen(q[0], q[1]);
-    ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(142,142,147,0.9)';
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-    ctx.stroke();
-  });
-
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2481cc';
-  const red = (f.built && !f.stale && f.built.redIds) || [];
+
+  // предложения — полупрозрачные точки (не разрезы): тут сустав помещается — цветом, тут тонко — серым
+  if (f.showSugg) {
+    flexiVisibleSugg(f).forEach((q) => {
+      const [px, py] = flexiToScreen(q.P[0], q.P[1]);
+      ctx.beginPath();
+      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = q.fit ? accent : '#8e8e93';
+      ctx.fill();
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+  }
+
   const order = flexiOrdered(f);
   order.forEach((c, i) => {
-    const d = flexiDims(f, c);
+    const st = flexiCutState(f, c);
     const [px, py] = flexiToScreen(c.P[0], c.P[1]);
-    const [hx, hy] = flexiToScreen(...flexiHandle(f, c));
-    const r = flexiPx(d.Rh);
-    const selected = f.selected === c.id;
-    const color = red.indexOf(c.id) !== -1 ? FLEXI_RED : accent;
+    const r = flexiPx(flexiR(c));
+    const open = f.menu === c.id;
+    const color = st === 'ok' ? FLEXI_GREEN : st === 'wait' ? '#8e8e93' : FLEXI_RED;
 
-    // кружок — реальный размер звена (наружный радиус кольца Rh)
+    // кружок — размер сустава; пока проверяется — пунктиром
     ctx.beginPath();
     ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fillStyle = selected ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)';
+    ctx.fillStyle = open ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)';
     ctx.fill();
-    ctx.lineWidth = selected ? 3 : 2;
+    ctx.lineWidth = open ? 3 : 2;
     ctx.strokeStyle = color;
+    ctx.setLineDash(st === 'wait' ? [5, 4] : []);
     ctx.stroke();
+    ctx.setLineDash([]);
     // черта поперёк ветви — место разреза
-    const L = flexiHalfBar(f, c);
+    const L = flexiHalfBar(c);
     const [ax, ay] = flexiToScreen(c.P[0] + c.n[1] * L, c.P[1] - c.n[0] * L);
+    const [bx, by] = flexiToScreen(c.P[0] - c.n[1] * L, c.P[1] + c.n[0] * L);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
-    ctx.lineTo(hx, hy);
-    ctx.lineWidth = selected ? 3.5 : 2.5;
+    ctx.lineTo(bx, by);
+    ctx.lineWidth = open ? 3.5 : 2.5;
     ctx.lineCap = 'round';
     ctx.stroke();
-    // ручка поворота
-    if (selected) {
-      ctx.beginPath();
-      ctx.arc(hx, hy, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-    }
     // номер (на маленьком кружке — поменьше, чтобы кружок было видно)
     const small = r < 15;
     ctx.beginPath();
@@ -483,17 +585,45 @@ function flexiDraw() {
     ctx.fillText(String(i + 1), px, py + 0.5);
   });
 
-  $('flexi-remove').disabled = f.selected == null;
-  $('flexi-add').classList.toggle('is-active', f.addMode);
+  $('flexi-suggest').classList.toggle('is-active', !!f.showSugg);
+  $('flexi-reset').disabled = !f.cuts.length;
   $('flexi-count').textContent = flexiChainInfo(f);
-  $('flexi-tip').textContent = f.addMode
-    ? 'Тапни по лапе или хвосту — там появится звено.'
-    : 'Тап по звену — выделить («🗑 Убрать» сольёт соседние). Тяни — сдвинуть (прилипает к скелету), кружок на конце черты — повернуть.';
+  flexiRenderCutNotes(f, order);
+  flexiRenderMenu(f);
+  $('flexi-build').disabled = !flexiCanBuild(f) || !!state.flexiBusy;
 }
 
-// «8 ветвей · 34 звена · хвост гнётся до ±120°»: самая длинная цепочка — звенья × α.
+// Красные разрезы — короткая причина под видом сверху; пока поток проверяет — «Проверяю…».
+function flexiRenderCutNotes(f, order) {
+  const box = $('flexi-cut-notes');
+  box.textContent = '';
+  order.forEach((c, i) => {
+    const why = flexiCutWhy(f, c);
+    if (why) box.appendChild(el('div', 'flexi-note is-error', '✖ Разрез ' + (i + 1) + ': ' + why));
+  });
+  const wait = f.cuts.filter((c) => c.st === 'wait').length;
+  if (wait) box.appendChild(el('div', 'flexi-note is-ok', wait === 1 ? 'Проверяю разрез…' : 'Проверяю разрезы… (' + wait + ')'));
+}
+
+// Маленькое меню у разреза — «Убрать» (причина красного — под видом сверху), над разрезом или под ним.
+function flexiRenderMenu(f) {
+  const pop = $('flexi-pop');
+  const c = f.menu != null && f.cuts.find((x) => x.id === f.menu);
+  if (!c) { pop.hidden = true; return; }
+  pop.hidden = false;
+  const box = $('flexi-top');
+  const [px, py] = flexiToScreen(c.P[0], c.P[1]);
+  const r = flexiPx(flexiR(c));
+  const w = pop.offsetWidth, h = pop.offsetHeight, bw = box.clientWidth, bh = $('flexi-canvas').clientHeight;
+  const left = Math.max(8, Math.min(bw - w - 8, px - w / 2));
+  const top = py - r - h - 8 >= 4 ? py - r - h - 8 : Math.min(bh - h - 4, py + r + 8);
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.top = Math.round(Math.max(4, top)) + 'px';
+}
+
+// «Позвоночник: 5 звеньев · лапы: 4 · гнётся до ±100°» или «8 ветвей · 24 звена · хвост гнётся до ±60°».
 function flexiChainInfo(f) {
-  if (!f.cuts.length) return 'Звеньев нет — нажми «↺ Авто» или «＋ Звено»';
+  if (!f.cuts.length) return 'Разрезов пока нет — фигурка целиком';
   const per = {};
   f.cuts.forEach((c) => { per[c.chain] = (per[c.chain] || 0) + 1; });
   // позвоночник — цепочка, в которой есть звенья позвоночника; остальные цепочки — лапы
@@ -509,7 +639,12 @@ function flexiChainInfo(f) {
     ' · ' + (nb === 1 ? 'гнётся' : 'хвост гнётся') + ' до ±' + longest * f.alphaSeg + '°';
 }
 
-/* ---------- Скелет: ближайшая точка, направление, ширина ---------- */
+// Точки-предложения, на которых ещё нет разреза.
+function flexiVisibleSugg(f) {
+  return (f.sugg || []).filter((q) => !f.cuts.some((c) => Math.hypot(c.P[0] - q.P[0], c.P[1] - q.P[1]) < 2));
+}
+
+/* ---------- Скелет: ближайшая точка, направление ---------- */
 
 function flexiNearestSkel(f, x, y) {
   let best = -1, bd = Infinity;
@@ -535,15 +670,33 @@ function flexiSkelDir(f, k) {
   return [nx / l, ny / l];
 }
 
-// Полуширина лапы: максимум dt на участке [P, P + 4 мм] — берём точки скелета рядом и чуть дальше от ядра.
-function flexiSkelWidth(f, x, y, n) {
-  let w = 0;
-  f.prep.skel.forEach((s) => {
-    const dx = s.x - x, dy = s.y - y;
-    const along = dx * n[0] + dy * n[1];
-    if (along >= -0.6 && along <= 4 && Math.abs(dx * n[1] - dy * n[0]) <= 1.5) w = Math.max(w, s.dt);
-  });
-  return w || 3;
+// Ближайшая точка ветви bi (только та часть, где можно резать) и направление вдоль неё (как в потоке: ±3 мм).
+function flexiAlong(f, bi, x, y) {
+  const b = f.paths && f.paths.get(bi);
+  if (!b) return null;
+  const n = b.pts.length / 2;
+  let kb = -1, bd = Infinity;
+  for (let k = Math.max(0, b.from); k < n; k++) {
+    const d = (b.pts[k * 2] - x) ** 2 + (b.pts[k * 2 + 1] - y) ** 2;
+    if (d < bd) { bd = d; kb = k; }
+  }
+  if (kb < 0) return null;
+  const at = (s) => { let k = 0; while (k < n - 1 && b.cum[k] < s) k++; return k; };
+  const a = at(b.cum[kb] - 3), z = at(b.cum[kb] + 3);
+  const dx = b.pts[z * 2] - b.pts[a * 2], dy = b.pts[z * 2 + 1] - b.pts[a * 2 + 1], l = Math.hypot(dx, dy) || 1;
+  return { P: [b.pts[kb * 2], b.pts[kb * 2 + 1]], n: [dx / l, dy / l] };
+}
+
+// Точка на фигурке (по картинке высот, с запасом 1 мм у края).
+function flexiOnModel(f, x, y) {
+  const g = f.prep.grid, h = f.prep.heights;
+  const cx = Math.floor((x - g.x0) / g.step), cy = Math.floor((y - g.y0) / g.step), r = Math.ceil(1 / g.step);
+  for (let py = cy - r; py <= cy + r; py++) {
+    for (let px = cx - r; px <= cx + r; px++) {
+      if (px >= 0 && py >= 0 && px < g.W && py < g.H && h[py * g.W + px]) return true;
+    }
+  }
+  return false;
 }
 
 /* ---------- Пальцем по виду сверху ---------- */
@@ -553,132 +706,113 @@ function flexiPoint(e) {
   return [e.clientX - r.left, e.clientY - r.top];
 }
 
+// Разрез под пальцем (ближайший, в пределах кружка, но не меньше 16 и не больше 26 px).
+function flexiHitCut(f, sx, sy) {
+  let hit = null, hd = Infinity;
+  f.cuts.forEach((c) => {
+    const [px, py] = flexiToScreen(c.P[0], c.P[1]);
+    const d = Math.hypot(sx - px, sy - py);
+    if (d < Math.max(16, Math.min(26, flexiPx(flexiR(c)))) && d < hd) { hd = d; hit = c; }
+  });
+  return hit;
+}
+function flexiHitSugg(f, sx, sy) {
+  let hit = null, hd = 18;
+  flexiVisibleSugg(f).forEach((q) => {
+    const [px, py] = flexiToScreen(q.P[0], q.P[1]);
+    const d = Math.hypot(sx - px, sy - py);
+    if (d < hd) { hd = d; hit = q; }
+  });
+  return hit;
+}
+
 function flexiPointerDown(e) {
   const f = state.flexi;
   if (!f || !f.prep || state.flexiBusy) return;
   e.preventDefault();
   const [sx, sy] = flexiPoint(e);
   try { $('flexi-canvas').setPointerCapture(e.pointerId); } catch (err) { /* ок */ }
-
-  // кружок поворота (сначала у выделенного)
-  const byHandle = (c) => {
-    const [hx, hy] = flexiToScreen(...flexiHandle(f, c));
-    const [px, py] = flexiToScreen(c.P[0], c.P[1]);
-    const dh = Math.hypot(sx - hx, sy - hy);
-    return dh < 20 && dh < Math.hypot(sx - px, sy - py); // на маленьком звене ручка близко к центру — побеждает ближайшее
-  };
-  const sel = f.cuts.find((c) => c.id === f.selected);
-  const rot = sel && byHandle(sel) ? sel : null; // ручка видна только у выделенного
-  if (rot) {
-    f.selected = rot.id;
-    flexiView.drag = { mode: 'rotate', id: rot.id, pointer: e.pointerId };
-    haptic();
-    flexiDraw();
-    return;
-  }
-  // сустав — выделить и тянуть (тап внутри кружка)
-  let hit = null, hd = Infinity;
-  f.cuts.forEach((c) => {
-    const [px, py] = flexiToScreen(c.P[0], c.P[1]);
-    const d = Math.hypot(sx - px, sy - py);
-    if (d < Math.max(20, flexiPx(flexiDims(f, c).Rh)) && d < hd) { hd = d; hit = c; }
-  });
-  if (hit && !f.addMode) {
-    haptic();
-    f.selected = hit.id;
-    flexiView.drag = { mode: 'move', id: hit.id, pointer: e.pointerId };
-    flexiDraw();
-    return;
-  }
-  if (f.addMode) {
-    const [mx, my] = flexiToModel(sx, sy);
-    const near = flexiNearestSkel(f, mx, my);
-    if (near) {
-      const s = f.prep.skel[near.k];
-      const n = flexiSkelDir(f, near.k);
-      let chain = Math.max(-1, ...f.cuts.map((x) => x.chain)) + 1, bd = Infinity;
-      f.cuts.forEach((x) => { const d = Math.hypot(x.P[0] - s.x, x.P[1] - s.y); if (d < bd && d < 40) { bd = d; chain = x.chain; } });
-      const c = { id: f.nextId++, P: [s.x, s.y], n, w: flexiSkelWidth(f, s.x, s.y, n), chain };
-      f.cuts.push(c);
-      f.selected = c.id;
-      f.edited = true;
-      f.addMode = false;
-      haptic('medium');
-      flexiInvalidate();
-    }
-    flexiDraw();
-    return;
-  }
-  if (f.selected != null) {
-    f.selected = null;
-    flexiDraw();
-  }
+  const hit = flexiHitCut(f, sx, sy);
+  flexiView.drag = { pointer: e.pointerId, x0: sx, y0: sy, id: hit ? hit.id : null, moved: false };
 }
 
+// Тянут разрез — он едет вдоль своей ветви (позвоночника, лапы); проверяется, когда отпустят.
 function flexiPointerMove(e) {
   const f = state.flexi;
   const d = flexiView.drag;
   if (!f || !d || d.pointer !== e.pointerId) return;
   e.preventDefault();
-  const c = f.cuts.find((x) => x.id === d.id);
+  const [sx, sy] = flexiPoint(e);
+  if (!d.moved && Math.hypot(sx - d.x0, sy - d.y0) < 8) return;
+  const c = d.id != null && f.cuts.find((x) => x.id === d.id);
   if (!c) return;
-  const [mx, my] = flexiToModel(...flexiPoint(e));
-  if (d.mode === 'move') {
-    const near = flexiNearestSkel(f, mx, my);
-    const snapMm = Math.max(4, (24 / flexiView.k) * f.prep.grid.step);
-    if (near && near.dist <= snapMm) {
-      // прилипает к скелету: направление и ширина — оттуда
-      const s = f.prep.skel[near.k];
-      c.P = [s.x, s.y];
-      let n = flexiSkelDir(f, near.k);
-      if (n[0] * c.n[0] + n[1] * c.n[1] < 0) n = [-n[0], -n[1]];
-      c.n = n;
-      c.w = flexiSkelWidth(f, s.x, s.y, n);
-    } else {
-      c.P = [mx, my];
-    }
-    c.auto = false; // сдвинули рукой — теперь ошибки по нему показываем
-  } else {
-    // ручка — на конце черты (направление t = (−n.y, n.x))
-    const tx = mx - c.P[0], ty = my - c.P[1];
-    const l = Math.hypot(tx, ty);
-    if (l > 0.5) c.n = [ty / l, -tx / l];
-    c.auto = false;
-  }
-  f.edited = true;
+  if (!d.moved) { d.moved = true; f.menu = null; haptic(); }
+  const q = flexiAlong(f, c.br, ...flexiToModel(sx, sy));
+  if (q) { c.P = q.P; c.n = q.n; }
+  c.st = 'wait';
+  c.ver++; // старая проверка устарела
   flexiInvalidate();
   flexiDraw();
 }
 
 function flexiPointerUp(e) {
+  const f = state.flexi;
   const d = flexiView.drag;
-  if (d && d.pointer === e.pointerId) flexiView.drag = null;
+  if (!d || d.pointer !== e.pointerId) return;
+  flexiView.drag = null;
+  if (!f || !f.prep) return;
+  if (d.moved) {
+    const c = d.id != null && f.cuts.find((x) => x.id === d.id);
+    if (c) flexiPlace(f, c, c.P[0], c.P[1], c.br, true, true);
+    return;
+  }
+  if (e.type === 'pointercancel') return;
+  // тап по разрезу — меню «Убрать»
+  if (d.id != null) {
+    haptic();
+    f.menu = f.menu === d.id ? null : d.id;
+    flexiDraw();
+    return;
+  }
+  // меню было открыто — тап мимо просто закрывает его
+  if (f.menu != null) {
+    f.menu = null;
+    flexiDraw();
+    return;
+  }
+  // тап по точке-предложению — она становится разрезом
+  const q = f.showSugg && flexiHitSugg(f, d.x0, d.y0);
+  if (q) { flexiAddCut(f, q.P[0], q.P[1], q.br, false); return; }
+  // тап по фигурке — разрез поперёк ветви в ближайшей точке скелета
+  const [mx, my] = flexiToModel(d.x0, d.y0);
+  if (flexiOnModel(f, mx, my)) flexiAddCut(f, mx, my, null, true);
 }
 
-function flexiRemove() {
+function flexiRemoveMenu() {
   const f = state.flexi;
-  if (!f || f.selected == null) return;
+  const c = f && f.menu != null && f.cuts.find((x) => x.id === f.menu);
+  if (!c) return;
   haptic();
-  f.cuts = f.cuts.filter((c) => c.id !== f.selected);
-  f.selected = null;
-  f.edited = true;
-  flexiInvalidate();
+  flexiDropCut(f, c);
+}
+
+function flexiReset() {
+  const f = state.flexi;
+  if (!f || !f.cuts.length) return;
+  haptic();
+  f.cuts.slice().forEach((c) => flexiDropCut(f, c, false));
+  f.menu = null;
   flexiDraw();
 }
 
-function flexiAddMode() {
-  const f = state.flexi;
-  if (!f) return;
-  haptic();
-  f.addMode = !f.addMode;
-  flexiDraw();
-}
-
-function flexiAutoBtn() {
+function flexiSuggestBtn() {
   const f = state.flexi;
   if (!f || !f.prep) return;
   haptic();
-  flexiAuto(f, false);
+  f.showSugg = !f.showSugg;
+  f.menu = null;
+  if (f.showSugg && !f.sugg) flexiSuggest(f);
+  flexiDraw();
 }
 
 /* ---------- Настройки на экране ---------- */
@@ -710,7 +844,10 @@ function flexiOnLength() {
 function flexiSchedulePrepare() {
   const f = state.flexi;
   if (!f || !f.prep) return;
+  // суставы на новом размере другие: разрезы проверятся заново, когда модель пересчитается
+  f.cuts.forEach((c) => { c.ver++; c.st = 'wait'; c.why = ''; });
   flexiInvalidate();
+  flexiDraw();
   clearTimeout(f.prepTimer);
   f.prepTimer = setTimeout(() => flexiPrepare(f, false), 450);
 }
@@ -720,21 +857,19 @@ function flexiSchedulePrepare() {
 async function flexiBuild() {
   const f = state.flexi;
   if (!f || !f.prep || state.flexiBusy) return;
-  if (!f.cuts.length) {
-    toast('Добавь хотя бы одно звено');
+  if (!flexiCanBuild(f)) {
+    toast(f.cuts.length ? 'Сначала сделай все разрезы зелёными' : 'Тапни по фигурке там, где она должна гнуться');
     return;
   }
   haptic();
   clearTimeout(f.prepTimer);
   state.flexiBusy = true;
+  f.menu = null;
   $('busy').hidden = false;
   $('busy-text').textContent = 'Готовлю звенья…';
   let r;
   try {
-    r = await flexiCall(f, {
-      type: 'build', opts: flexiOpts(f),
-      cuts: f.cuts.map((c) => ({ id: c.id, P: c.P, n: c.n, w: c.w, chain: c.chain, auto: !!c.auto, br: c.br, s: c.s, root: c.root, spine: c.spine })),
-    });
+    r = await flexiCall(f, { type: 'build', opts: flexiOpts(f), cuts: f.cuts.map(flexiCutMsg) });
   } catch (err) {
     state.flexiBusy = false;
     $('busy').hidden = true;
@@ -749,18 +884,12 @@ async function flexiBuild() {
   $('busy').hidden = true;
   if (state.flexi !== f) return;
 
-  // автоматические разрезы, которые так и не разрезались, убираем (соседние звенья сливаются), сдвинутые — переставляем
-  const skipped = r.skipped || [];
-  if (skipped.length) f.cuts = f.cuts.filter((c) => skipped.indexOf(c.id) === -1);
-  f.cuts.forEach((c) => { const m = r.moved && r.moved[c.id]; if (m) Object.assign(c, m); });
-  if (f.selected != null && !f.cuts.some((c) => c.id === f.selected)) f.selected = null;
-  const why = r.skipWhy || {};
-  const nThin = skipped.filter((id) => why[id] === 'thin').length, nCut = skipped.length - nThin;
-  const skLine = (n, tail) => n + ' ' + plural(n, 'звено', 'звена', 'звеньев') + ' пропущено — ' + tail;
-  const sk = $('flexi-skipped');
-  sk.hidden = !skipped.length;
-  sk.textContent = [nCut ? skLine(nCut, 'там не режется') : '', nThin ? skLine(nThin, 'тут тонко') : ''].filter(Boolean).join(' · ');
+  // разрез, который при сборке всё-таки не получился, — красный, с причиной (ничего не пропускается молча)
   const errors = r.notes.filter((x) => x.level === 'error');
+  errors.forEach((x) => {
+    const c = x.id != null && f.cuts.find((q) => q.id === x.id);
+    if (c && c.st === 'ok') { c.st = 'bad'; c.why = x.why; }
+  });
   f.built = Object.assign(r, { errors });
   f.stale = false;
   $('flexi-result').hidden = false;
@@ -986,7 +1115,7 @@ async function flexiExport() {
   const f = state.flexi;
   if (f && f.previewReady) await f.previewReady; // снимок делаем из превью
   if (!flexiReady(f) || state.flexiBusy || !flexiPrev.v) {
-    if (f && f.built && f.stale) toast('Сначала пересобери — нажми «🔧 Собрать»');
+    if (f && f.built && f.stale) toast('Сначала пересобери — нажми «🔧 Собрать STL»');
     else if (f && f.built && f.built.errors.length) toast('Есть красные ошибки — исправь их и пересобери');
     return;
   }
@@ -1033,29 +1162,29 @@ function bindFlexi() {
   canvas.addEventListener('pointermove', flexiPointerMove);
   canvas.addEventListener('pointerup', flexiPointerUp);
   canvas.addEventListener('pointercancel', flexiPointerUp);
-  $('flexi-remove').addEventListener('click', flexiRemove);
-  $('flexi-add').addEventListener('click', flexiAddMode);
-  $('flexi-auto').addEventListener('click', flexiAutoBtn);
+  $('flexi-pop-remove').addEventListener('click', flexiRemoveMenu);
+  $('flexi-suggest').addEventListener('click', flexiSuggestBtn);
+  $('flexi-reset').addEventListener('click', flexiReset);
   $('flexi-length').addEventListener('input', flexiOnLength);
 
   const withF = (fn) => (e) => { const f = state.flexi; if (f) fn(f, e); };
   document.querySelectorAll('#flexi-gap button').forEach((b) => b.addEventListener('click', withF((f) => {
     haptic();
     f.g = Number(b.dataset.v);
-    flexiSettingChanged();
+    flexiSettingChanged(true);
   })));
+  // длина звена и звенья тела — шаг предложений; гибкость меняет сам сустав — разрезы проверяются заново
   let sliderTimer = 0;
-  const slider = (id, apply) => $(id).addEventListener('input', withF((f) => {
+  const slider = (id, apply, recheck) => $(id).addEventListener('input', withF((f) => {
     apply(f, Number($(id).value));
     flexiRenderSettings();
-    flexiInvalidate();
-    if (f.prep) flexiDraw();
+    if (recheck) flexiInvalidate();
     clearTimeout(sliderTimer);
-    sliderTimer = setTimeout(() => { if (state.flexi === f && !f.edited) flexiAuto(f, false); }, 350);
+    sliderTimer = setTimeout(() => { if (state.flexi === f) flexiSettingChanged(recheck); }, 350);
   }));
-  slider('flexi-k', (f, v) => { f.k = v; });
-  slider('flexi-kb', (f, v) => { f.kBody = v; });
-  slider('flexi-aseg', (f, v) => { f.alphaSeg = v; });
+  slider('flexi-k', (f, v) => { f.k = v; }, false);
+  slider('flexi-kb', (f, v) => { f.kBody = v; }, false);
+  slider('flexi-aseg', (f, v) => { f.alphaSeg = v; }, true);
 
   $('flexi-build').addEventListener('click', flexiBuild);
   $('flexi-wiggle').addEventListener('click', () => {
