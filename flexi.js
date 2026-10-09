@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=8';
-const FLEXI_CORE_URL = './flexi-core.js?v=8';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=9';
+const FLEXI_CORE_URL = './flexi-core.js?v=9';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -64,6 +64,7 @@ function openFlexi(id) {
   $('flexi-warn-parts').hidden = true;
   $('flexi-skipped').hidden = true;
   $('flexi-thin').hidden = true;
+  $('flexi-small-joints').hidden = true;
   $('flexi-status').hidden = false;
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
@@ -318,6 +319,8 @@ async function flexiAuto(f, silent) {
   // места, где сустав не помещается внутри (тонкие лапки, кончик хвоста) — серые точки на виде сверху
   f.thin = r.thin || [];
   f.legs = r.legs; // сколько лап у фигурки (со звеньями или цельных)
+  // суставы с минимумами в мм: на маленькой фигурке хвосту и лапам их не хватает — просим сделать крупнее
+  $('flexi-small-joints').hidden = !r.small;
   $('flexi-thin').hidden = !f.thin.length;
   f.selected = null;
   flexiInvalidate();
@@ -1001,7 +1004,10 @@ async function flexiExport() {
   try {
     let snapshot = '';
     try { snapshot = flexiSnapshot(); } catch (e) { /* без снимка */ }
-    r = await cadPost({ a: 'flexi', id: f.id, file: await cadBlobToDataUrl(bytes), snapshot }, 120000);
+    r = await cadPost({
+      a: 'flexi', id: f.id, file: await cadBlobToDataUrl(bytes), snapshot,
+      caption: 'Не масштабируй в слайсере — суставы рассчитаны на этот размер', // текст к STL в чате
+    }, 120000);
   } catch (e) {
     r = { status: 0, data: null };
   }

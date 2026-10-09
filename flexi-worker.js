@@ -2,7 +2,7 @@
 import Module from './vendor/manifold/manifold.js?v=1';
 import {
   parseSTL, writeSTL, loadModel, placeModel, repairModel, analyze, attachGrooves, autoCuts, orderCuts, buildJoints, meshOf, FlexiError,
-} from './flexi-core.js?v=8';
+} from './flexi-core.js?v=9';
 
 let wasmPromise = null;
 let base = null;   // фигурка после ориентации (без масштаба)
@@ -32,6 +32,7 @@ self.onmessage = async (e) => {
     } else if (msg.type === 'prepare') {
       if (!base) throw new FlexiError('no_model');
       if (model) { model.delete(); model = null; }
+      if (an && an.skinIn) { an.skinIn.delete(); an.skinIn = null; }
       const placed = placeModel(wasm, base, msg.length, msg.cut);
       if (placed.isEmpty()) { placed.delete(); throw new FlexiError('empty'); }
       // шаг 0: перепаять — щели и самопересечения заплавляются, лишние куски выбрасываются
@@ -45,6 +46,8 @@ self.onmessage = async (e) => {
       const bb = model.boundingBox();
       an = analyze(mesh, bb);
       attachGrooves(an, rep);
+      an.skinIn = rep.skinIn; // кожа, сжатая на 0.8 мм: суставы должны лежать в ней целиком
+      an.inAt = rep.inAt;
       // скелет для экрана: x, y, dt, родитель, расстояние от ядра
       const skeleton = new Float32Array(an.skeleton.length * 5);
       an.skeleton.forEach((s, k) => {
@@ -58,7 +61,7 @@ self.onmessage = async (e) => {
     } else if (msg.type === 'auto') {
       if (!an) throw new FlexiError('no_model');
       const r = autoCuts(an, msg.opts);
-      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin, legs: r.legs });
+      self.postMessage({ type: 'cuts', id: msg.id, cuts: r.cuts, thin: r.thin, legs: r.legs, small: r.small });
     } else if (msg.type === 'build') {
       if (!model) throw new FlexiError('no_model');
       const opts = msg.opts;
