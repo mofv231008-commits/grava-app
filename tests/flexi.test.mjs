@@ -135,7 +135,7 @@ function skinCheck(parts, skin, skinIn) {
 }
 
 // Ни один сустав не выходит за skinIn (кожа, сжатая внутрь на 0.8 мм, снизу у стола не сжата): тела сустава
-// строятся заново по его размерам, объём (петля ∪ кольцо) − skinIn < 1 мм³ (шейку не считаем — она по коже).
+// строятся заново по его размерам, объём (петля ∪ ушко) − skinIn < 1 мм³ (шейку не считаем — она по коже).
 function skinInCheck(joints, skinIn) {
   const outs = joints.map((J) => {
     const B = jointBodies(wasm, J.dims, J.P, J.n);
@@ -144,7 +144,7 @@ function skinInCheck(joints, skinIn) {
     return o.v;
   });
   const worst = outs.length ? Math.max(...outs) : 0;
-  ok('ни один сустав не выходит за skinIn: (петля ∪ кольцо) − skinIn < 1 мм³', worst < SKIN_TOL, worst.toFixed(3) + ' мм³');
+  ok('ни один сустав не выходит за skinIn: (петля ∪ ушко) − skinIn < 1 мм³', worst < SKIN_TOL, worst.toFixed(3) + ' мм³');
 }
 
 // Модель как в телефоне: масштаб, срез низа, починка, анализ, бороздки, skinIn.
@@ -329,16 +329,15 @@ const catLegs = (res, an, T) => {
   ok('передние на одном звене, задние на другом', w[0].body === w[1].body && w[2].body === w[3].body && w[0].body !== w[2].body, w.map((x) => x.body));
 };
 
-// Размер печати. Суставы теперь с минимумами в мм (стойка ⌀ ≥ 3.2, стенка ушка ≥ 2.0, перекладины ≥ 2.4) —
-// на тонких лапах и хвостах маленькой фигурки им негде поместиться, приложение тогда просит сделать крупнее.
-// Полные цепочки проверяем на том размере, где сустав помещается (от 18 см, как и советует подсказка).
+// Размер печати — 15 см, как в телефоне по умолчанию: сустав по образцу крокодила в долях звена, с невысоким
+// минимумом — влезает в звено шириной от ~9 мм. Время — с проверкой каждого разреза (как на экране после тапа)
+// и сборкой.
+const MIN_ARM = 2, MIN_TAIL = 3; // щупальца сужаются к кончику; хвост ящерицы на 15 см
 const MODELS = {
-  // щупальца сужаются к кончику: даже при 250 мм сустав влезает на первые ~3 звена каждого
-  // время — с проверкой каждого разреза (как на экране после тапа) и сборкой
-  octopus: () => ({ m: octopus(), expect: { classify: arms(3), length: 250, small: false, maxMs: 90000 } }),
-  cat: () => ({ m: cat(), expect: { classify: catCheck, after: catLegs, length: 250, small: false, maxMs: 75000 } }),
-  snake: () => ({ m: snake().m, expect: { classify: snakeCheck, length: 180, maxMs: 60000 } }),
-  lizard: () => ({ m: lizard(), expect: { classify: animal(3), length: 180, small: false, maxMs: 60000 } }),
+  octopus: () => ({ m: octopus(), expect: { classify: arms(MIN_ARM), length: 150, maxMs: 90000 } }),
+  cat: () => ({ m: cat(), expect: { classify: catCheck, after: catLegs, length: 150, maxMs: 75000 } }),
+  snake: () => ({ m: snake().m, expect: { classify: snakeCheck, length: 150, maxMs: 60000 } }),
+  lizard: () => ({ m: lizard(), expect: { classify: animal(MIN_TAIL), length: 150, small: false, maxMs: 60000 } }),
   // кости скелета (полуширина ~2 мм) тоньше любого спрятанного сустава: на них звеньев нет, 4 лапы — серым
   skeleton: () => ({ m: skeleton(), expect: { noLinks: 4, small: true, maxMs: 30000 } }),
 };
@@ -379,7 +378,11 @@ function rayIn(m, ax, p) {
 const lenAt = (iv, x) => { const s = iv.find(([a, b]) => a <= x && x <= b); return s ? s[1] - s[0] : 0; };
 const firstAfter = (iv, x) => { const s = iv.find(([a]) => a > x); return s ? s[1] - s[0] : 0; };
 
-function jointBar(W, H) {
+/* Сустав в бруске W×H (как у брелока-крокодила: стойка-стадион, толстое ушко, петля почти во всю высоту).
+   Мерим по готовым деталям: 2 цельные детали, зазор ≥ 0.4 мм везде, сдвиг на 1 мм в любую из 6 сторон задевает,
+   поворот ±20° без касания. thick — толщины для бруска 16×11 (стойка ≥ 3.2 × 2.0, стенка ушка ≥ 2.0,
+   перекладины ≥ 2.0); tall — петля ≥ 80 % высоты бруска. */
+function jointBar(W, H, { thick = false, tall = false } = {}) {
   const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
   const bar = roundedBar(W, H);
   const mesh = meshOf(bar);
@@ -391,6 +394,8 @@ function jointBar(W, H) {
   const child = (res.parts.find((p) => p.joint === 0) || {}).manifold, parent = (res.parts.find((p) => p.joint === -1) || {}).manifold;
   const J = res.joints[0];
   if (child && parent && J) {
+    const d = J.dims;
+    console.log(`  стойка ${d.px.toFixed(2)}×${d.py.toFixed(2)}, стенка ушка ${d.be.toFixed(2)}, перекладины ${d.ta.toFixed(2)}, ушко ${d.te.toFixed(2)}, петля ${d.Lt.toFixed(2)} из ${H}, вылет ${d.La.toFixed(2)}`);
     const hit = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map((v) => {
       const m = child.translate(v);
       const x = inter(m, parent);
@@ -399,21 +404,27 @@ function jointBar(W, H) {
     });
     ok('сдвиг ребёнка на 1 мм в любую из 6 сторон задевает родителя', hit.every((x) => x > 0.01), hit.map((x) => x.toFixed(1)).join(' '));
     const turn = [-20, 20].map((a) => { const m = child.rotate([0, 0, a]); const x = inter(m, parent); m.delete(); return x; });
-    ok('поворот на ±20° свободен (пересечение ≤ 0.5 мм³)', turn.every((x) => x <= 0.5), turn.map((x) => x.toFixed(3)).join(' / '));
+    ok('поворот на ±20° без касания', turn.every((x) => x <= 1e-3), turn.map((x) => x.toFixed(4)).join(' / '));
     const gap = child.minGap(parent, 1);
     ok('минимальный зазор ≥ 0.4 мм', gap >= 0.4, gap.toFixed(3));
-    // толщины — по готовой сетке, на высоте ушка (середина кольца)
-    const d = J.dims, ze = d.z0 + (d.ez0 + d.ez1) / 2;
-    const stand = Math.min(lenAt(rayIn(child, 0, [0, 0, ze]), 0), lenAt(rayIn(child, 1, [0, 0, ze]), 0));
-    ok('стойка петли ⌀ ≥ 3.2 мм (срез на высоте ушка)', stand >= 3.2 - 0.05, stand.toFixed(2) + ' мм');
+    // толщины — по готовой сетке, на высоте ушка (середина пластины)
+    const ze = d.z0 + (d.ez0 + d.ez1) / 2;
+    const across = lenAt(rayIn(child, 1, [0, 0, ze]), 0), along = lenAt(rayIn(child, 0, [0, 0, ze]), 0);
     const wall = Math.min(firstAfter(rayIn(parent, 0, [0, 0, ze]), 0.1), firstAfter(rayIn(parent, 1, [0, 0, ze]), 0.1),
       firstAfter(rayIn(parent, 1, [0, 0, ze]).map(([a, b]) => [-b, -a]).reverse(), 0.1));
-    ok('стенка ушка ≥ 2.0 мм (вперёд и по бокам от стойки)', wall >= 2.0 - 0.05, wall.toFixed(2) + ' мм');
-    // перекладины: материал ребёнка под ушком и над ним, в проёме петли перед стойкой
-    const xa = (d.dp / 2 + d.g + d.Re) / 2;
+    // перекладины: материал ребёнка под ушком и над ним, над передней стенкой ушка
+    const xa = d.hx + d.be / 2;
     const zr = rayIn(child, 2, [xa, 0, 0]);
     const below = lenAt(zr, d.z0 + 0.3), above = firstAfter(zr, d.z0 + d.ez1);
-    ok('перекладины ≥ 2.4 мм (под ушком и над ним)', Math.min(below, above) >= 2.4 - 0.05, below.toFixed(2) + ' / ' + above.toFixed(2) + ' мм');
+    const loopH = lenAt(rayIn(child, 2, [0, 0, 0]), d.z0 + d.Lt / 2);
+    if (thick) {
+      ok('стойка петли ≥ 3.2 × 2.0 мм (поперёк × вдоль, на высоте ушка)', across >= 3.2 - 0.05 && along >= 2.0 - 0.05, across.toFixed(2) + ' × ' + along.toFixed(2) + ' мм');
+      ok('стенка ушка ≥ 2.0 мм (вперёд и по бокам от стойки)', wall >= 2.0 - 0.05, wall.toFixed(2) + ' мм');
+      ok('перекладины ≥ 2.0 мм (под ушком и над ним)', Math.min(below, above) >= 2.0 - 0.05, below.toFixed(2) + ' / ' + above.toFixed(2) + ' мм');
+    } else {
+      console.log(`  по сетке: стойка ${across.toFixed(2)} × ${along.toFixed(2)}, стенка ушка ${wall.toFixed(2)}, перекладины ${below.toFixed(2)} / ${above.toFixed(2)}`);
+    }
+    if (tall) ok('петля ≥ 80 % высоты бруска', loopH >= 0.8 * H, loopH.toFixed(2) + ' из ' + H + ' мм');
   }
   ok('ни одной ошибки', !res.notes.some((x) => x.level === 'error'), res.notes.map((x) => x.text));
   skinCheck(res.parts, bar);
@@ -427,13 +438,29 @@ function jointBar(W, H) {
   const B2 = jointBodies(wasm, d2, [0, 0], [1, 0]);
   const o2 = jointOutside(wasm, B2, [0, 0], [1, 0], Math.max(d2.La + 3, d2.Re + d2.g + 2), rep.skinIn, d2);
   Object.values(B2).forEach((m) => m.delete());
-  ok('(петля ∪ кольцо) − skinIn < 1 мм³ (кожа у стола снизу не сжата), низ сустава на столе', o2.v < SKIN_TOL && d2.z0 < 0.3,
+  ok('(петля ∪ ушко) − skinIn < 1 мм³ (кожа у стола снизу не сжата), низ сустава на столе', o2.v < SKIN_TOL && d2.z0 < 0.3,
     o2.v.toFixed(3) + ' мм³, низ ' + d2.z0.toFixed(2) + ' мм');
   const v2 = checkCut(wasm, rep.manifold, mesh2, an2, { id: 1, P: [0, 0], n: [1, 0], w: W / 2, chain: 0 }, opts);
   ok('сустав зелёный (проверка разреза как на экране)', v2.ok, v2);
   [rep.manifold, rep.skinIn].forEach((m) => m.delete());
   res.parts.forEach((p) => p.manifold.delete());
   bar.delete();
+}
+
+// Брусок 7×6 мм — сустав уже не влезает: красный с причиной в цифрах.
+function tooSmallBar(W, H) {
+  const opts = { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 };
+  const bar = roundedBar(W, H);
+  const rep = repairModel(wasm, bar);
+  bar.delete();
+  const mesh = meshOf(rep.manifold);
+  const an = analyze(mesh, rep.manifold.boundingBox());
+  an.skinIn = rep.skinIn;
+  an.inAt = rep.inAt;
+  const v = checkCut(wasm, rep.manifold, mesh, an, { id: 1, P: [0, 0], n: [1, 0], w: W / 2, chain: 0 }, opts);
+  console.log(`\nбрусок ${W}×${H} мм`);
+  ok('сустав не влезает — красный с причиной в цифрах', !v.ok && THIN_RE.test(v.why), v.why);
+  [rep.manifold, rep.skinIn].forEach((m) => m.delete());
 }
 
 // Сустав по размерам помещается, но вылезает из сжатой кожи: брусок 16×11 с глубоким пазом сбоку (4 мм шириной —
@@ -564,7 +591,7 @@ function atSize(name, stl, length, expect) {
   if (expect.neck != null) ok(expect.neck ? 'шея — зелёный разрез' : 'шея — красная, с причиной в цифрах', expect.neck ? !!neck : !neck && THIN_RE.test(lastRed(0, neckEnd).slice(1, -1)), neck ? at(neck) : lastRed(0, neckEnd));
   if (expect.body != null) ok(expect.body ? 'тело — зелёный разрез' : 'тело — красное, с причиной в цифрах', expect.body ? !!body : !body && THIN_RE.test(lastRed(bodyA, bodyB).slice(1, -1)), body ? at(body) : lastRed(bodyA, bodyB));
   if (expect.tail != null) {
-    ok(`на хвосте зелёных разрезов ≥ ${expect.tail}` + (expect.tailWhy ? ' (дальше — красная причина в цифрах)' : ''), tail.length >= expect.tail &&
+    ok((expect.tail ? `на хвосте зелёных разрезов ≥ ${expect.tail}` : 'на хвосте сустав не влезает') + (expect.tailWhy ? ' (красная причина в цифрах)' : ''), tail.length >= expect.tail &&
       (!expect.tailWhy || THIN_RE.test(lastRed(hip, L).slice(1, -1))), tail.map(at).join(', ') + (tail.length < 2 ? ' · ' + lastRed(hip, L) : ''));
   }
   if (kept.length) {
@@ -608,8 +635,8 @@ const snapCheck = (M, opts) => {
   }
 };
 
-// Кот на 163 мм (как построен): лапы и хвост r = 5 мм тоньше сустава — подсказка «сделай крупнее».
-function hintAt(name, m, length) {
+// Подсказка «сделай крупнее»: кот как построен (163 мм) — суставы помещаются, на 10 см — уже нет.
+function hintAt(name, m, length, want) {
   const stl = writeSTL([meshOf(m)]);
   const base = loadModel(wasm, parseSTL(stl));
   const placed = placeModel(wasm, base.manifold, length, 1);
@@ -622,26 +649,33 @@ function hintAt(name, m, length) {
   an.inAt = rep.inAt;
   const found = autoCuts(an, { g: 0.45, alphaSeg: 20, k: 1.2, kBody: 0.5 });
   console.log(`\n${name} на ${length} мм — расстановка: ${found.cuts.length} разрезов`);
-  ok('подсказка «На таком размере суставы помещаются не везде. Сделай фигурку крупнее — от 18 см»', found.small === true, found.small);
+  ok(want ? 'подсказка «На таком размере суставы помещаются не везде. Сделай фигурку крупнее — от 18 см»' : 'подсказки «сделай крупнее» нет — суставы помещаются',
+    found.small === want, found.small);
   [rep.manifold, rep.skinIn, base.manifold].forEach((x) => x.delete());
 }
 
 const T0 = performance.now();
-if (!ONLY || ONLY.includes('hint')) { const m = cat(); hintAt('кот', m, 163); m.delete(); }
-if (!ONLY || ONLY.includes('joint')) { jointBar(13, 10.5); jointBar(16, 11); outsideReason(); }
+// кот как построен (163 мм): сустав по образцу крокодила влезает и в лапы, и в хвост; на 10 см — уже нет
+if (!ONLY || ONLY.includes('hint')) { const m = cat(); hintAt('кот', m, 163, false); hintAt('кот', m, 100, true); m.delete(); }
+if (!ONLY || ONLY.includes('joint')) {
+  jointBar(16, 11, { thick: true });
+  jointBar(12, 10);
+  jointBar(9, 8, { tall: true });
+  tooSmallBar(7, 6);
+  outsideReason();
+}
 if (!ONLY || ONLY.includes('taps')) taps();
 if (!ONLY || ONLY.includes('size')) {
   const stlOf = (mk) => { const m = mk(); const b = writeSTL([meshOf(m)]); m.delete(); return b; };
   const gk = fs.readFileSync(path.join(HERE, 'gecko.stl'));
   const gecko = gk.buffer.slice(gk.byteOffset, gk.byteOffset + gk.byteLength);
+  // сустав по образцу крокодила — в долях звена, с невысоким минимумом: влезает в звено шириной от ~9 мм
   atSize('ящерица', stlOf(lizard), 150, { neck: true, body: true, tail: 2 });
-  // эублефар от бота — уже порезан прорезями на сегменты; хвост на 15 см ниже 9.3 мм (столько нужно суставу
-  // с минимумами) почти везде — одно звено; на 18 см — два
-  atSize('эублефар', gecko, 150, { neck: true, body: true, tail: 1, tailWhy: true });
+  // эублефар от бота — уже порезан прорезями на сегменты
+  atSize('эублефар', gecko, 150, { neck: true, body: true, tail: 2 });
   atSize('эублефар', gecko, 180, { neck: true, body: true, tail: 2 });
-  // скелет: тело на 15 см высотой ~8.8 мм (нужно от 9.3), шея и хвост — стержни ~3 мм (нужно от 10.6 в ширину)
-  atSize('скелет', stlOf(skeleton), 150, { neck: false, body: false });
-  atSize('скелет', stlOf(skeleton), 180, { neck: false, body: true });
+  // скелет: шея и тело — зелёные; хвост — стержень ~3 мм (нужно от 7.5 в ширину) — красный, причина в цифрах
+  atSize('скелет', stlOf(skeleton), 150, { neck: true, body: true, tail: 0, tailWhy: true });
 }
 for (const [name, mk] of Object.entries(MODELS)) {
   if (ONLY && !ONLY.includes(name)) continue;

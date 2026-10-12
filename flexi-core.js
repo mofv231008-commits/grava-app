@@ -444,7 +444,7 @@ export function repairModel(wasm, model, v = 0.3, onStage) {
   };
   const dense = Manifold.levelSet(sample, bounds, v, 0);
   stage('levelset');
-  // skinIn — кожа, сжатая внутрь на 0.8 мм: петля и кольцо сустава должны лежать в ней целиком (стенка ≥ 0.8 мм).
+  // skinIn — кожа, сжатая внутрь на 0.8 мм: петля и ушко сустава должны лежать в ней целиком (стенка ≥ 0.8 мм).
   // 1. Прорези и полости уже 2·RC заплавлены: у готовой подвижной модели (эублефар от бота — прорези между
   //    сегментами и полости под старые суставы) сустав в прорези виден, как в зазоре, но наружу не торчит.
   // 2. Снизу, от стола, не сжимаем — петля стоит на столе: под каждой колонкой, где тело касается стола (слой kb —
@@ -687,40 +687,64 @@ export function ztopAt(an, x, y, r = 3) {
 const DEG = Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
-/* Сустав «ушко в петле» (как у flexi happy lizard). opts: { g — зазор, alphaSeg — поворот на звено, ° }.
-   У заднего звена (родителя) посередине высоты вперёд торчит плоское ушко — горизонтальное кольцо с дыркой;
-   у переднего (ребёнка) — петля: стойка сквозь дырку ушка, сверху и снизу перекладины уходят в тело ребёнка.
-   w — полуширина тела в точке разреза, Hs — высота тела на оси, z0 — низ сустава (стол или низ кожи + 0.8),
-   Hfree — сколько высоты над z0 есть до верха кожи. Размеры — в мм ГОТОВОЙ фигурки, с минимумами, чтобы
-   стойки и стенки печатались прочными при любом масштабе (S — толщина тела: min(2w, Hs, Hfree) — по свободной
-   высоте над следом петли, чтобы у перехода тела в хвост сустав был по хвосту, а не по толстому телу):
-     dp — диаметр стойки 3.2…4.4, ta — перекладины по высоте 2.4…3.2, bw = dp — их ширина,
-     be — стенка кольца ушка 2.0…2.8, te — ушко по высоте 2.4…3.2.
-   fits — сустав помещается: Lt + 0.8 ≤ Hfree и Re + g + 0.8 ≤ w (иначе звена здесь нет).
+/* Сустав «ушко в петле» по образцу брелока-крокодила «sleep croc» (печатается и держит): сустав на всё звено.
+   opts: { g — зазор, alphaSeg — поворот на звено α, ° }. У заднего звена (родителя) посередине высоты вперёд
+   торчит толстая пластина-ушко с дыркой, срощенная с телом во всю ширину; у переднего (ребёнка) — петля: плоская
+   стойка-«стадион» поперёк тела проходит сквозь дырку, сверху и снизу перекладины уходят в тело ребёнка.
+   w — полуширина тела в точке разреза, W = 2w; Hs — высота тела на оси, Hfree — свободная высота над низом сустава
+   z0 (с запасом 0.8 сверху), H = min(Hs, Hfree), S = min(W, H). Размеры — в мм готовой фигурки, в долях звена
+   с невысоким минимумом (минимумы — с крокодила длиной 73 мм):
+     px = 0.24·W (1.8…5.0) — стойка поперёк тела, py = 0.14·W (1.2…3.2) — вдоль: стадион, полукруглые торцы;
+     be = 0.20·W (1.6…3.5) — стенка ушка; ta = 0.20·S (1.2…3.0) — перекладины по высоте, их ширина = px;
+     te = H − 1 − 2·ta − 2·GZ (1.2…3.0) — пластина ушка: всё, что осталось по высоте;
+     hi = te + 2·GZ — проём петли (люфт GZ = 0.6 мм сверху и снизу), Lt = 2·ta + hi ≈ H − 1 — петля во всю высоту.
+   Дырка ушка — стадион стойки, прокрученный на ±Θ (Θ = α + 3°) и раздутый на g: поворот ±α свободен при любой
+   форме стойки. ha = (px − py)/2 — полупрямая стадиона, r0 = py/2; дырка вдоль n — до hx = ha·sin Θ + r0 + g,
+   ушко поперёк — до Re = px/2 + g + be. Передняя стойка петли (внутренняя грань La − ta) стоит за ушком,
+   прокрученным ещё на ±Θ и раздутым на g: La − ta = ha·sin 2Θ + r0 + 2g + be.
+   fits — помещается: Lt + 0.8 ≤ H и px/2 + g + be + 0.8 ≤ w (иначе звена здесь нет).
    Rh — «радиус» для расстановки: (La + Re + 2)/2, сумма двух соседних — шаг La + Re + 2. */
+export const GZ = 0.6;
 export function jointDims(opts, w, Hs, wOut = w, z0 = 0, Hfree = Hs) {
   const g = opts.g;
   const alpha = opts.alphaSeg;
-  const S = Math.min(2 * w, Hs, Hfree);
-  const dp = clamp(0.30 * S, 3.2, 4.4);   // диаметр стойки петли
-  const ta = clamp(0.22 * S, 2.4, 3.2);   // толщина перекладин по высоте
-  const bw = dp;                          // ширина перекладин и передней стойки
-  const be = clamp(0.20 * S, 2.0, 2.8);   // стенка кольца ушка
-  const te = clamp(0.22 * S, 2.4, 3.2);   // толщина ушка по высоте
-  const ai = be + 2 * g + 0.6;            // длина проёма петли (вдоль n)
-  const hi = te + 2 * g + 0.4;            // высота проёма петли
-  const Lt = 2 * ta + hi;                 // высота петли
-  const La = dp / 2 + ai + ta;            // вылет петли вперёд
-  const Re = dp / 2 + g + be;             // наружный радиус ушка
-  const ez0 = ta + g, ez1 = ez0 + te;     // ушко по высоте (от низа петли)
+  const TH = alpha + 3;                       // запас поворота в дырке ушка, °
+  const W = 2 * w, H = Math.min(Hs, Hfree);
+  const S = Math.min(W, H);
+  const px = clamp(0.24 * W, 1.8, 5.0);       // стойка петли поперёк тела
+  const py = clamp(0.14 * W, 1.2, 3.2);       // стойка петли вдоль тела
+  const be = clamp(0.20 * W, 1.6, 3.5);       // стенка ушка
+  const ta = clamp(0.20 * S, 1.2, 3.0);       // перекладины по высоте
+  const te = clamp(H - 1.0 - 2 * ta - 2 * GZ, 1.2, 3.0); // пластина ушка
+  const hi = te + 2 * GZ;                     // проём петли по высоте
+  const Lt = 2 * ta + hi;                     // высота петли
+  const ha = Math.max(0, (px - py) / 2), r0 = py / 2;
+  const hx = ha * Math.sin(TH * DEG) + r0 + g; // дырка ушка вдоль n
+  const Re = px / 2 + g + be;                  // ушко поперёк (наибольший радиус)
+  const La = ta + ha * Math.sin(2 * TH * DEG) + r0 + 2 * g + be; // вылет петли вперёд
+  const ez0 = ta + GZ, ez1 = ez0 + te;         // ушко по высоте (от низа петли)
   const Rh = (La + Re + 2) / 2;
   return {
-    g, w, Hs, z0, Hfree, dp, ta, bw, be, te, ai, hi, Lt, La, Re, ez0, ez1, Rh, alpha, H: Lt,
-    fits: Lt + 0.8 <= Hfree && Re + g + 0.8 <= w,
+    g, gz: GZ, TH, w, Hs, z0, Hfree: H, px, py, ha, r0, hx, be, ta, te, hi, Lt, La, Re, ez0, ez1, Rh, alpha, H: Lt,
+    bw: px, // ширина перекладин и передней стойки
+    fits: Lt + 0.8 <= H && Re + 0.8 <= w,
     // V-вырез — всю ширину тела (не дальше w + 6: у ядра прорезал бы суставы соседей)
     Rs: Math.max(Re + g + 0.5, w + 2, Math.min(wOut + 1.5, w + 6)),
   };
 }
+
+// Стойка петли (стадион вдоль y, полупрямая ha, радиус r0) и расстояние от точки до неё, прокрученной на угол a.
+const segDist = (x, y, ha, a) => {
+  const ex = -ha * Math.sin(a), ey = ha * Math.cos(a), l2 = ex * ex + ey * ey;
+  const t = l2 > 0 ? clamp((x * ex + y * ey) / l2, -1, 1) : 0;
+  return Math.hypot(x - t * ex, y - t * ey);
+};
+// До стойки во всех положениях ±th (рад): дырка ушка — где это ≤ r0 + g, ушко — от r0 + g до r0 + g + be.
+const sweptDist = (x, y, ha, th) => {
+  let m = Infinity;
+  for (let k = -4; k <= 4; k++) m = Math.min(m, segDist(x, y, ha, (th * k) / 4));
+  return m;
+};
 
 // Низ и верх кожи в точке (карты высот вида сверху, шаг 0.5 мм); вне силуэта — null.
 function spanAt(an, x, y) {
@@ -753,15 +777,15 @@ function axisSpan(an, x, y) {
 // стенка. Hfree — до самого низкого верха над петлёй.
 // n и d0 (прикидочные размеры) задают след; без них — только ось.
 function footSpan(an, P, n, d0) {
-  // низ и верх сустава — это петля: стойка на оси и перекладины до передней стойки (кольцо и шейка — посередине
+  // низ и верх сустава — это петля: стойка на оси и перекладины до передней стойки (ушко и шейка — посередине
   // высоты, их держит проверка по skinIn)
   const pts = [[0, 0]];
   if (n && d0) {
     // весь след петли сеткой 0.5 мм: стойка, перекладины, передняя стойка (низ кожи под хвостом, отходящим от
     // стола, растёт неровно — по нескольким точкам можно не заметить, где он выше)
-    const hw = d0.bw / 2, front = d0.La + 2;
-    for (let x = -d0.dp / 2; x <= front + 1e-6; x += 0.5) {
-      for (let y = -hw; y <= hw + 1e-6; y += Math.max(0.5, hw / 3)) if (x >= 0 || Math.hypot(x, y) <= d0.dp / 2) pts.push([x, y]);
+    const hw = d0.px / 2, front = d0.La + 2;
+    for (let x = -d0.r0; x <= front + 1e-6; x += 0.5) {
+      for (let y = -hw; y <= hw + 1e-6; y += Math.max(0.5, hw / 3)) if (x >= 0 || segDist(x, y, d0.ha, 0) <= d0.r0) pts.push([x, y]);
     }
   }
   const t = n ? [-n[1], n[0]] : [0, 0];
@@ -945,7 +969,7 @@ export function branchGrooves(an, br) {
 /* ---------- Автопоиск разрезов ---------- */
 
 // Полуширина в точке разреза: радиус самого большого круга вокруг P внутри силуэта (минимум в ±0.5 мм пути —
-// в бороздке ветвь уже, и кольцо должно поместиться именно там).
+// в бороздке ветвь уже, и ушко должно поместиться именно там).
 const brMinDt = (br, k) => {
   let m = Infinity;
   for (let j = k; j >= 0 && br.cum[k] - br.cum[j] <= 0.5; j--) m = Math.min(m, br.dt[j]);
@@ -980,25 +1004,26 @@ export function cutAt(an, opts, bi, k, w) {
 }
 
 // Сустав целиком внутри skinIn — быстрая проверка для расстановки: петля (стойка, перекладины, передняя стойка)
-// и кольцо ушка обходятся сеткой 0.6 мм, каждая точка — по полю расстояний skinIn (an.inAt). Шейку ушка не
+// и пластина ушка обходятся сеткой 0.6 мм, каждая точка — по полю расстояний skinIn (an.inAt). Шейку ушка не
 // проверяем — она срастается с телом родителя и обрезается по коже. Снаружи SKIN_TOL мм³ и больше — не помещается.
 // Точная проверка — булевой операцией (jointOutside).
 function footprintOk(an, P, n, d) {
   if (!an.inAt) return true;
   const h = 0.6, cell = h * h * h;
-  const { dp, ta, bw, hi, La, Lt, Re, ez0, ez1, g, z0 } = d;
+  const { px, ha, r0, ta, hi, La, Lt, Re, ez0, ez1, g, z0, be, hx, TH } = d;
+  const th = TH * DEG;
   const t = [-n[1], n[0]];
   // по высоте — сетка 0.6 мм и ещё низ и верх петли, перекладин и ушка (тонкая полоска у грани иначе проскакивает
   // между слоями сетки)
   const zs = [0.05, ta - 0.05, ta + hi + 0.05, ez0 + 0.05, ez1 - 0.05, Lt - 0.05];
   for (let z = h / 2; z < Lt; z += h) zs.push(z);
   let out = 0;
-  for (let x = -Re + h / 2; x < La + 2; x += h) {
+  for (let x = -(hx + be) + h / 2; x < La + 2; x += h) {
     for (let y = -Re + h / 2; y < Re; y += h) {
-      const r = Math.hypot(x, y);
+      const rs = segDist(x, y, ha, 0), re = sweptDist(x, y, ha, th);
       for (const z of zs) {
-        const inLoop = r <= dp / 2 || (Math.abs(y) <= bw / 2 && ((x >= 0 && x <= La && (z <= ta || z >= ta + hi)) || (x >= La - ta && x <= La + 2)));
-        const inEye = z >= ez0 && z <= ez1 && r <= Re && r >= dp / 2 + g;
+        const inLoop = rs <= r0 || (Math.abs(y) <= px / 2 && ((x >= 0 && x <= La && (z <= ta || z >= ta + hi)) || (x >= La - ta && x <= La + 2)));
+        const inEye = z >= ez0 && z <= ez1 && re > r0 + g && re <= r0 + g + be;
         if ((!inLoop && !inEye) || Math.abs(x) < GAP) continue;
         if (an.inAt(P[0] + n[0] * x + t[0] * y, P[1] + n[1] * x + t[1] * y, z0 + z) < 0) {
           out += cell;
@@ -1043,7 +1068,7 @@ const roomLeft = (an, c, g) => {
   const br = an.branches[c.br];
   return br.cum[br.cum.length - 1] - c.s > c.Rh + g + 4;
 };
-// Соседние суставы: кольца не ближе 0.2 мм — жёсткий предел сборщика (ближе — ошибка «слишком близко»).
+// Соседние суставы: кружки (Rh) не ближе 0.2 мм — жёсткий предел сборщика (ближе — ошибка «слишком близко»).
 export const sepMin = (Ra, Rb) => Ra + Rb + 0.2;
 // На экране и в предложениях запас больше: между кружками суставов (радиус Rh) — не меньше CLEAR мм.
 export const CLEAR = 2;
@@ -1056,11 +1081,11 @@ export const NEAR_WHY = 'слишком близко к соседнему ра�
 // Допуск «сустав − skinIn»: воксели 0.3 мм дают шум по краям.
 export const SKIN_TOL = 1;
 const mm = (x) => (Math.round(x * 10) / 10).toFixed(1);
-// «тут тонко: высота 7.8 мм, нужно от 9.3 — …» (не прошло Lt + 0.8 ≤ Hs или Re + g + 0.8 ≤ w; ширина — полная, 2w)
+// «тут тонко: высота 7.8 мм, нужно от 9.3 — …» (не прошло Lt + 0.8 ≤ H или px/2 + g + be + 0.8 ≤ w; ширина — полная, 2w)
 export function thinWhy(d) {
   const parts = [];
   if (!(d.Lt + 0.8 <= d.Hfree)) parts.push('высота ' + mm(Math.max(0, d.Hfree)) + ' мм, нужно от ' + mm(d.Lt + 0.8));
-  if (!(d.Re + d.g + 0.8 <= d.w)) parts.push('ширина ' + mm(2 * d.w) + ' мм, нужно от ' + mm(2 * (d.Re + d.g + 0.8)));
+  if (!(d.Re + 0.8 <= d.w)) parts.push('ширина ' + mm(2 * d.w) + ' мм, нужно от ' + mm(2 * (d.Re + 0.8)));
   return 'тут тонко: ' + (parts.join('; ') || 'сустав не помещается') + ' — ' + THIN_TAIL;
 }
 // «сустав вылезает наружу сверху на 3.2 мм³»
@@ -1418,31 +1443,48 @@ const SEG = 48;
 
 /* Тела сустава «ушко в петле» в мировых координатах. Строим в локальных: ось — вертикаль через начало,
    +X = n (вперёд, к ребёнку), z = 0 — низ сустава (d.z0). Потом поворот к n и сдвиг в P.
-   Ребёнку: loop — стойка ⌀ dp на оси, перекладины снизу и сверху (ta по высоте, bw поперёк), передняя стойка
-   уходит в тело ребёнка на 2 мм. Родителю: ring — плоское кольцо (стенка be) вокруг стойки на высоте ez0…ez1;
-   eyeNeck — его шейка назад, к телу родителя (обрезается по коже и по телу родителя — только как страховка).
-   Очистки: fan — канал петли в родителе (±(α + 3°)), eyeClear — место ушка в ребёнке. notch — V-вырез.
-   Петля и кольцо по коже НЕ обрезаются: сустав ставится только туда, где он целиком внутри (см. buildJoints). */
+   Ребёнку: loop — стойка-стадион px × py на оси (поперёк × вдоль), перекладины снизу и сверху (ta по высоте,
+   px поперёк), передняя стойка уходит в тело ребёнка на 2 мм. Родителю: ring — ушко: толстая пластина (дырка,
+   раздутая на be) на высоте ez0…ez1; дырка — стадион стойки, прокрученный на ±Θ и раздутый на g;
+   eyeNeck — шейка во всю ширину пластины назад, к телу родителя (обрезается по коже и по телу родителя).
+   Очистки: fan — канал петли в родителе (±Θ), eyeClear — место ушка в ребёнке: ушко, прокрученное ещё на ±Θ
+   и раздутое на g, по высоте с люфтом GZ. notch — V-вырез.
+   Петля и ушко по коже НЕ обрезаются: сустав ставится только туда, где он целиком внутри (см. buildJoints). */
 export function jointBodies(wasm, d, P, n, skin) {
-  const { Manifold } = wasm;
-  const { dp, ta, bw, g, La, Lt, hi, Re, ez0, ez1, Rs, z0 } = d;
+  const { Manifold, CrossSection } = wasm;
+  const { px, ha, r0, ta, g, gz, La, Lt, hi, Re, ez0, ez1, te, be, hx, Rs, z0, TH } = d;
   const tmp = [];
   const T = (m) => { tmp.push(m); return m; };
   const box = (x0, x1, hy, za, zb) => T(T(Manifold.cube([x1 - x0, 2 * hy, zb - za])).translate([x0, -hy, za]));
   const cyl = (r, za, zb) => T(T(Manifold.cylinder(zb - za, r, r, SEG)).translate([0, 0, za]));
   const tall = (r) => cyl(r, -50, 200);
+  const prism = (cs, za, zb) => T(T(cs.extrude(zb - za)).translate([0, 0, za]));
+  // стойка во всех положениях от −a до +a (°): выпуклая оболочка концов её прямой части, k шагов
+  const swept = (a, k) => {
+    const pts = [];
+    for (let i = -k; i <= k; i++) {
+      const t = (a * i / k) * DEG, ex = -ha * Math.sin(t), ey = ha * Math.cos(t);
+      pts.push([ex, ey], [-ex, -ey]);
+    }
+    pts.push([0.01, 0], [-0.01, 0]); // не вырожденная, даже если ha ≈ 0
+    return T(CrossSection.hull(pts));
+  };
+  const off = (cs, r) => T(cs.offset(r, 'Round', 2, SEG));
 
-  // петля ребёнка: стойка, перекладины снизу и сверху, передняя стойка
-  const loop = Manifold.union([cyl(dp / 2, 0, Lt), box(0, La, bw / 2, 0, ta), box(0, La, bw / 2, ta + hi, Lt), box(La - ta, La + 2, bw / 2, 0, Lt)]);
-  // ушко родителя
-  const ring = cyl(Re, ez0, ez1).subtract(cyl(dp / 2 + g, ez0 - 1, ez1 + 1));
-  const eyeNeck = box(-(Rs + 1), -(dp / 2 + g), Re, ez0, ez1).translate([0, 0, 0]);
+  // петля ребёнка: стойка-стадион, перекладины снизу и сверху, передняя стойка
+  const stand = off(swept(0, 1), r0);
+  const loop = Manifold.union([prism(stand, 0, Lt), box(0, La, px / 2, 0, ta), box(0, La, px / 2, ta + hi, Lt), box(La - ta, La + 2, px / 2, 0, Lt)]);
+  // ушко родителя: пластина вокруг дырки
+  const sw1 = swept(TH, 4);
+  const hole = off(sw1, r0 + g);
+  const outer = off(sw1, r0 + g + be);
+  const ring = prism(T(outer.subtract(hole)), ez0, ez1).translate([0, 0, 0]);
+  const eyeNeck = box(-(Rs + 1), -hx, Re, ez0, ez1).translate([0, 0, 0]);
   // канал петли в родителе: петля поворачивается на ±α, с запасом 3°
-  const fb = box(-(dp / 2 + g), La + g, bw / 2 + g, -1, Lt + g);
-  const fa = (d.alpha + 3);
-  const fan = Manifold.hull([T(fb.rotate([0, 0, -fa])), T(fb.rotate([0, 0, fa]))]);
-  // место ушка в ребёнке: ушко круглое вокруг оси — поворот его не задевает
-  const eyeClear = cyl(Re + g, ez0 - g, ez1 + g).translate([0, 0, 0]);
+  const fb = box(-(r0 + g), La + g, px / 2 + g, -1, Lt + g);
+  const fan = Manifold.hull([T(fb.rotate([0, 0, -TH])), fb, T(fb.rotate([0, 0, TH]))]);
+  // место ушка в ребёнке: ушко, прокрученное на ±Θ (в ребёнке стойка ходит на ±2Θ), раздутое на g, с люфтом по высоте
+  const eyeClear = prism(off(swept(2 * TH, 8), r0 + 2 * g + be), ez0 - gz, ez1 + gz).translate([0, 0, 0]);
 
   // V-вырез: родитель оставляет |φ| ≥ 90°+β, ребёнок |φ| ≤ 90°−β, каждый отступает на g/2
   const beta = (d.alpha / 2) * DEG;
@@ -1481,7 +1523,7 @@ export function jointBodies(wasm, d, P, n, skin) {
   return out;
 }
 
-/* Объём сустава (петля ∪ кольцо; шейку не считаем — она обрезается по коже) вне skinIn — кожи, сжатой внутрь
+/* Объём сустава (петля ∪ ушко; шейку не считаем — она обрезается по коже) вне skinIn — кожи, сжатой внутрь
    на 0.8 мм, без щели разреза (|x| < GAP вдоль n). { v, where }: where — где вылезает больше всего («сверху» —
    выше верхней перекладины снизу, «снизу» — ниже верха нижней, иначе «сбоку»); считается, только если d передан
    и v ≥ SKIN_TOL. */
@@ -1532,7 +1574,7 @@ function bigCount(m) {
   return n;
 }
 
-// Без крошек: куски < 20 мм³ выбрасываются. Внутренние пустоты (отрицательный объём) остаются — кольцо может
+// Без крошек: куски < 20 мм³ выбрасываются. Внутренние пустоты (отрицательный объём) остаются — ушко может
 // замкнуть с телом карман щели, и заливать его нельзя: он вне кожи.
 function solidParts(wasm, m) {
   const all = m.decompose();
@@ -1595,7 +1637,7 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress, check
     const near = joints.find((J) => Math.hypot(J.P[0] - P[0], J.P[1] - P[1]) < sepMin(J.Rh, d.Rh, g) - 0.01);
     if (near) fail('near');
     // 2. проба ребёнка
-    // за кольцом, на ветви; если точка попала в прорезь бороздки — чуть дальше или на другой высоте
+    // за ушком, на ветви; если точка попала в прорезь бороздки — чуть дальше или на другой высоте
     let qc = null, qz = 0, pi = -1;
     for (const ahead of [1.5, 2.5, 3.5, 1]) {
       const q = [P[0] + n[0] * (d.Rh + g + ahead), P[1] + n[1] * (d.Rh + g + ahead)];
@@ -1616,7 +1658,7 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress, check
     const keep = (m) => { made.push(m); return m; };
     let outIn = 0;
     try {
-      // 3½. сустав целиком внутри тела: петля и кольцо — в коже, сжатой на 0.8 мм (шейка обрезана по коже)
+      // 3½. сустав целиком внутри тела: петля и ушко — в коже, сжатой на 0.8 мм (шейка обрезана по коже)
       if (an.skinIn) {
         const o = jointOutside(wasm, B, P, n, Math.max(d.La + 3, d.Re + d.g + 2), an.skinIn, d);
         outIn = o.v;
@@ -1628,7 +1670,7 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress, check
       const ci = comps.findIndex((m) => probe(wasm, m, qc[0], qc[1], qz));
       const others = comps.filter((_, i) => i !== ci);
       if (ci < 0 || others.length === 0) fail('no_split');
-      // «отрезал кусок» проверяем ниже, после кольца: оно может снова пришить щепку у сустава к телу
+      // «отрезал кусок» проверяем ниже, после ушка: оно может снова пришить щепку у сустава к телу
 
       // 5. ребёнок: лапа без места под ушко + петля
       const c1 = keep(comps[ci].subtract(B.eyeClear));
@@ -1661,7 +1703,7 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress, check
         changed.push({ qi, m: keep(unionAll(wasm, qs)) });
       }
 
-      // 8. ушко: кольцо + шейка, обрезанная по телу родителя (дальше назад, за прошлый сустав, ей нельзя)
+      // 8. ушко: пластина + шейка, обрезанная по телу родителя (дальше назад, за прошлый сустав, ей нельзя)
       const neck = keep(B.eyeNeck.intersect(p2));
       const eye = keep(B.ring.add(neck));
       const parentM = keep(solidParts(wasm, keep(p2.add(eye))));
@@ -1693,19 +1735,19 @@ export function buildJoints(wasm, model, mesh, an, cuts, opts, onProgress, check
       changed.forEach(({ qi, m }) => { made.splice(made.indexOf(m), 1); pieces[qi].m.delete(); pieces[qi].m = m; });
       const jointIdx = joints.length;
       joints.push({
-        id: cut.id, P: P.slice(), n: n.slice(), Rh: d.Rh, dp: d.dp, Re: d.Re, alpha: d.alpha, H: d.H, outIn,
+        id: cut.id, P: P.slice(), n: n.slice(), Rh: d.Rh, Re: d.Re, eyeR: d.hx + d.be / 2, alpha: d.alpha, H: d.H, outIn,
         dims: Object.assign({}, d), // все размеры сустава — для проверок и экрана
         zEye: d.z0 + (d.ez0 + d.ez1) / 2,
         parent: piece.joint, chain: cut.chain == null ? -1 : cut.chain, spine: !!cut.spine, s: cut.s,
       });
       piece.m.delete();
       pieces.splice(pi, 1, { m: parentM, joint: piece.joint, n: pn }, { m: child, joint: jointIdx, n: 1 });
-      // разрез позвоночника делит тело, на котором уже держатся лапы: кольцо лапы могло уйти в новую половину —
-      // тогда её родитель теперь новое звено (щупаем кольцо ушка позади оси)
+      // разрез позвоночника делит тело, на котором уже держатся лапы: ушко лапы могло уйти в новую половину —
+      // тогда её родитель теперь новое звено (щупаем стенку ушка позади оси)
       for (let ji = 0; ji < jointIdx; ji++) {
         const J = joints[ji];
         if (J.parent !== piece.joint) continue;
-        const rr = (J.dp / 2 + g + J.Re) / 2;
+        const rr = J.eyeR; // посередине стенки ушка позади оси
         const Q = [J.P[0] - J.n[0] * rr, J.P[1] - J.n[1] * rr];
         if (probe(wasm, child, Q[0], Q[1], J.zEye)) J.parent = jointIdx;
       }
