@@ -4,8 +4,8 @@
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
 
-const FLEXI_WORKER_URL = './flexi-worker.js?v=12';
-const FLEXI_CORE_URL = './flexi-core.js?v=12';
+const FLEXI_WORKER_URL = './flexi-worker.js?v=13';
+const FLEXI_CORE_URL = './flexi-core.js?v=13';
 const FLEXI_MAX_FILE = 12 * 1024 * 1024;
 // сустав спрятан внутри — соседние звенья красим двумя цветами по очереди, чтобы было видно, где они
 const FLEXI_COLORS = [0xc8c8c8, 0xf0a35e];
@@ -79,7 +79,7 @@ function openFlexi(id) {
   flexiLoadCore()
     .then((core) => {
       f.core = core;
-      return api({ a: 'flexi', id });
+      return Api.flexi(id);
     })
     .then((data) => {
       if (state.flexi !== f) return;
@@ -207,14 +207,7 @@ function flexiCall(f, msg, transfer) {
 /* ---------- Загрузка STL ---------- */
 
 async function flexiDownload(f) {
-  const res = await fetchWithTimeout(apiUrl({ a: 'file', id: f.id, what: 'file' }), 180000);
-  if (res.status === 401) throw new ApiError('auth');
-  const type = res.headers.get('content-type') || '';
-  if (!res.ok || type.indexOf('json') !== -1) {
-    let data = null;
-    try { data = await res.json(); } catch (e) { /* не JSON */ }
-    throw new ApiError(data && data.error === 'auth' ? 'auth' : 'http_' + res.status);
-  }
+  const res = await Api.download({ a: 'file', id: f.id, what: 'file' }, 180000);
   const total = Number(res.headers.get('content-length')) || 0;
   let buffer;
   if (res.body && res.body.getReader) {

@@ -1,16 +1,19 @@
 /* Грава — Telegram Mini App для бота @grava_ai_bot */
 'use strict';
 
-const API = 'https://engrave.app.n8n.cloud/webhook/grava-app';
 const THREE_URL = './vendor/three/three-viewer.min.js?v=3';
 
-const tg = window.Telegram && window.Telegram.WebApp;
 const $ = (id) => document.getElementById(id);
 
 const state = {
   me: null,
-  tab: 'works',
+  tab: 'create',
   detail: null,     // открытая работа
+  detailFresh: false, // работа только что готова — файл уже в чате
+  detailFormat: 'stl', // формат будущей модели для эскиза
+  order: null,      // открытый экран заказа (create.js)
+  wait: null,       // id заказа на экране ожидания (jobs.js)
+  creating: false,  // заказ отправляется
   viewer: false,    // открыт ли 3D-просмотр
   listScroll: 0,
   lastLoad: 0,
@@ -25,76 +28,11 @@ const state = {
   flexiBusy: false,
 };
 
-/* ---------- Помощники Телеги ---------- */
-
-function supports(version) {
-  try { return tg.isVersionAtLeast(version); } catch (e) { return false; }
-}
-
-function haptic(style) {
-  try { tg.HapticFeedback.impactOccurred(style || 'light'); } catch (e) { /* старый клиент */ }
-}
-
-function hapticNotify(type) {
-  try { tg.HapticFeedback.notificationOccurred(type); } catch (e) { /* старый клиент */ }
-}
-
-function alertBox(text) {
-  if (supports('6.2')) tg.showAlert(text);
-  else window.alert(text);
-}
-
-function confirmBox(text, cb) {
-  if (supports('6.2')) tg.showConfirm(text, cb);
-  else cb(window.confirm(text));
-}
-
 function sessionExpired() {
   hapticNotify('error');
   confirmBox('Сессия устарела. Закрыть приложение? Потом открой его заново из бота.', (ok) => {
     if (ok) tg.close();
   });
-}
-
-/* ---------- Запросы к серверу ---------- */
-
-class ApiError extends Error {
-  constructor(code) {
-    super(code);
-    this.code = code;
-  }
-}
-
-function apiUrl(params) {
-  const parts = Object.keys(params).map((k) => k + '=' + encodeURIComponent(params[k]));
-  parts.push('initData=' + encodeURIComponent(tg.initData));
-  return API + '?' + parts.join('&');
-}
-
-// Только GET и без своих заголовков — так браузер не делает лишний CORS-запрос.
-async function fetchWithTimeout(url, ms, outerSignal) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  const onOuterAbort = () => ctrl.abort();
-  if (outerSignal) outerSignal.addEventListener('abort', onOuterAbort);
-  try {
-    return await fetch(url, { signal: ctrl.signal });
-  } catch (e) {
-    if (outerSignal && outerSignal.aborted) throw e;
-    throw new ApiError('network');
-  } finally {
-    clearTimeout(timer);
-    if (outerSignal) outerSignal.removeEventListener('abort', onOuterAbort);
-  }
-}
-
-async function api(params, timeoutMs) {
-  const res = await fetchWithTimeout(apiUrl(params), timeoutMs || 20000);
-  let data = null;
-  try { data = await res.json(); } catch (e) { /* не JSON */ }
-  if (res.status === 401 || (data && data.error === 'auth')) throw new ApiError('auth');
-  if (!res.ok || !data || data.ok !== true) throw new ApiError((data && data.error) || 'http_' + res.status);
-  return data;
 }
 
 function handleActionError(err, what) {
@@ -141,13 +79,24 @@ function formatNumber(n) {
 }
 
 function isModel(o) { return o.kind === 'model'; }
+function isSketch(o) { return o.kind === 'sketch' || o.sketch === true; }
+function isCadDraft(o) { return o.kind === 'cad'; } // деталь по размерам, файла ещё нет
+function isFlexiMode(o) { return o.mode === '3d_flexi' || o['3d_flexi'] === true; }
+// sketch | model | laser | cad — от этого зависят кнопки на экране работы.
+function kindOf(o) { return isSketch(o) ? 'sketch' : isModel(o) ? 'model' : isCadDraft(o) ? 'cad' : 'laser'; }
 function fileFormat(o) { return isModel(o) ? String(o.format || 'stl').toUpperCase() : 'DXF'; }
 function isStl(o) { return isModel(o) && fileFormat(o) === 'STL'; }
-function kindEmoji(o) { return o.kind === 'cad' ? '📐' : isModel(o) ? '🧊' : '🔥'; }
-function hasFile(o) { return o.has_file !== false; } // в старых ответах поля нет — файл есть
+function kindEmoji(o) { return { cad: '📐', model: '🧊', sketch: '✏️', laser: '🔥' }[kindOf(o)]; }
+function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 
 function formatLabel(o) {
+  if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
   return o.size_mm ? fileFormat(o) + ' · ' + o.size_mm + ' мм' : fileFormat(o);
+}
+
+function findOrder(id) {
+  if (id == null) return null;
+  return ((state.me && state.me.orders) || []).find((o) => String(o.id) === String(id)) || null;
 }
 
 let toastTimer = 0;
@@ -187,7 +136,7 @@ function fillPreview(box, o) {
     ph.classList.remove('is-loading');
     ph.textContent = kindEmoji(o);
   };
-  img.src = apiUrl({ a: 'file', what: 'preview', id: o.id });
+  img.src = Api.fileUrl(o.id, 'preview');
   box.appendChild(img);
 }
 
@@ -199,18 +148,28 @@ function showScreen(name) {
   renderView();
 }
 
+// Какой экран сверху: экраны поверх вкладок открываются один над другим.
+function topScreen() {
+  if (state.flexi) return 'flexi';
+  if (state.cad) return 'cad';
+  if (state.wait) return 'wait';
+  if (state.order) return 'order';
+  if (state.detail) return 'detail';
+  return null;
+}
+
 function renderView() {
   const inApp = !$('app').hidden;
-  const inFlexi = !!state.flexi;
-  const inCad = !inFlexi && !!state.cad;
-  const inDetail = !inFlexi && !inCad && !!state.detail;
-  const overlay = inFlexi || inCad || inDetail; // экраны поверх вкладок
-  $('view-works').hidden = overlay || state.tab !== 'works';
-  $('view-balance').hidden = overlay || state.tab !== 'balance';
-  $('view-editor').hidden = overlay || state.tab !== 'editor';
-  $('view-detail').hidden = !inDetail;
-  $('view-cad').hidden = !inCad;
-  $('view-flexi').hidden = !inFlexi;
+  const top = topScreen();
+  const overlay = !!top;
+  ['create', 'works', 'balance', 'editor'].forEach((t) => {
+    $('view-' + t).hidden = overlay || state.tab !== t;
+  });
+  $('view-detail').hidden = top !== 'detail';
+  $('view-order').hidden = top !== 'order';
+  $('view-wait').hidden = top !== 'wait';
+  $('view-cad').hidden = top !== 'cad';
+  $('view-flexi').hidden = top !== 'flexi';
   $('tabbar').hidden = !inApp || overlay;
   document.body.classList.toggle('no-tabbar', !inApp || overlay);
   document.querySelectorAll('.tab').forEach((t) => {
@@ -224,20 +183,42 @@ function renderView() {
   }
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
-  const noSwipes = editorOpen || (inApp && (inCad || inFlexi));
+  const noSwipes = editorOpen || (inApp && (top === 'cad' || top === 'flexi'));
   if (noSwipes !== state.noSwipes) {
     state.noSwipes = noSwipes;
-    if (supports('7.7')) {
-      try {
-        if (noSwipes) tg.disableVerticalSwipes();
-        else tg.enableVerticalSwipes();
-      } catch (e) { /* ок */ }
-    }
+    tg.swipes(!noSwipes);
   }
+
+  if (inApp) syncButtons();
+  jobsSyncTicker();
+}
+
+// Кнопки Телеги (или их замена в браузере) под экран, который сейчас сверху.
+// Конструктор и сборщик шарниров управляют MainButton сами.
+function syncButtons() {
+  const top = topScreen();
+  if (top === 'cad' || top === 'flexi') return;
+  if (top) tg.BackButton.show();
+  else tg.BackButton.hide();
+  let text = '';
+  if (top === 'order') text = orderMainText();
+  else if (top === 'detail') text = detailMainText(state.detail);
+  if (!text) {
+    tg.MainButton.hide();
+    return;
+  }
+  const theme = tg.themeParams;
+  tg.MainButton.setParams({
+    text,
+    is_visible: true,
+    is_active: true,
+    color: theme.button_color || undefined,
+    text_color: theme.button_text_color || undefined,
+  });
 }
 
 function setTab(tab) {
-  if (state.tab === tab) {
+  if (state.tab === tab && !topScreen()) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
@@ -279,19 +260,20 @@ function renderSkeleton() {
 }
 
 function workCard(o) {
-  const isCadDraft = o.kind === 'cad'; // деталь из бота, файла ещё нет
+  const cadDraft = isCadDraft(o);
   const card = el('div', 'work');
   card.setAttribute('role', 'button');
   card.tabIndex = 0;
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
   if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', '🦴 на шарнирах'));
+  else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? '✏️ эскиз · 🦎' : '✏️ эскиз'));
   card.appendChild(thumb);
 
   const body = el('div', 'work-body');
   body.appendChild(el('div', 'work-title', o.title || 'Без названия'));
   const meta = el('div', 'work-meta');
-  if (isCadDraft) {
+  if (cadDraft) {
     meta.classList.add('is-wrap');
     meta.appendChild(el('span', '', 'Деталь по размерам · файла ещё нет'));
   } else {
@@ -301,7 +283,7 @@ function workCard(o) {
   body.appendChild(meta);
 
   if (o.flexi === true) {
-    const btn = el('button', 'work-cad-btn', '🦴 Собрать шарниры');
+    const btn = el('button', 'work-cad-btn', '⛓ Сделать подвижной');
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -309,8 +291,8 @@ function workCard(o) {
     });
     body.appendChild(btn);
   }
-  if (isCadDraft || o.cad === true) {
-    const btn = el('button', 'work-cad-btn', isCadDraft ? '📐 Открыть в конструкторе' : '📐 В конструктор');
+  if (cadDraft || o.cad === true) {
+    const btn = el('button', 'work-cad-btn', cadDraft ? '📐 Открыть в конструкторе' : '📐 В конструктор');
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -321,10 +303,6 @@ function workCard(o) {
   card.appendChild(body);
 
   const open = () => {
-    if (isCadDraft) {
-      openCad(o.id);
-      return;
-    }
     haptic();
     openDetail(o);
   };
@@ -351,10 +329,37 @@ function renderWorks() {
 }
 
 /* ---------- Экран работы ---------- */
+/* Один экран и для готового результата, и для работы из «Мои работы». */
 
-function openDetail(o) {
-  state.listScroll = window.scrollY;
+// opts.fresh — работа только что готова (файл уже пришёл в чат).
+function openDetail(o, opts) {
+  if (!topScreen()) state.listScroll = window.scrollY;
   state.detail = o;
+  state.detailFresh = !!(opts && opts.fresh);
+  state.detailFormat = 'stl';
+  $('detail-sizes').hidden = true;
+  $('resize-custom').hidden = true;
+  renderDetail();
+  renderView();
+  window.scrollTo(0, 0);
+}
+
+// Самая свежая 3D-модель — только у неё есть «Другой формат».
+function isNewestModel(o) {
+  const orders = (state.me && state.me.orders) || [];
+  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true);
+  return !!newest && String(newest.id) === String(o.id);
+}
+
+function canAsk(o) {
+  const k = kindOf(o);
+  return k === 'sketch' || k === 'laser' || k === 'cad' || o.cad === true;
+}
+
+function renderDetail() {
+  const o = state.detail;
+  if (!o) return;
+  const k = kindOf(o);
 
   const preview = $('detail-preview');
   fillPreview(preview, o);
@@ -366,35 +371,80 @@ function openDetail(o) {
 
   const meta = $('detail-meta');
   meta.textContent = '';
-  [isModel(o) ? '3D-модель' : 'Чертёж для лазера', formatLabel(o), formatDate(o.date, true)]
+  const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж для лазера', cad: 'Деталь по размерам' }[k];
+  [kindName, k === 'sketch' ? (isFlexiMode(o) ? '🦎 подвижная' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
     .filter(Boolean)
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
+  // Эскиз: перед «Лепим» — выбор формата модели.
+  $('detail-format').hidden = k !== 'sketch';
+  document.querySelectorAll('#detail-format button').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.v === state.detailFormat);
+  });
+
   $('detail-3d').hidden = !can3d;
-  // у деталей из конструктора и собранных на шарнирах редактор картинок не нужен
-  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true;
-  $('detail-cad').hidden = o.cad !== true;
   $('detail-flexi').hidden = o.flexi !== true;
-  $('detail-note').textContent = !isModel(o)
-    ? 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.'
-    : isStl(o)
+  $('detail-cad').hidden = o.cad !== true; // у черновика детали конструктор — на главной кнопке
+  $('detail-resize').hidden = k !== 'laser' || o.cad === true || !hasFile(o);
+  if (o.size_mm) {
+    document.querySelectorAll('#detail-sizes [data-mm]').forEach((c) => {
+      c.classList.toggle('is-current', c.dataset.mm === String(o.size_mm));
+    });
+  }
+  $('detail-ask').hidden = !canAsk(o);
+  // у деталей из конструктора и собранных на шарнирах редактор картинок не нужен
+  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad';
+  $('detail-again').hidden = k !== 'sketch' || !savedPrompt(o.id);
+  $('detail-again').textContent = withPrice('🔄 Другой вариант', 'sketch');
+  const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
+  $('detail-reformat').hidden = !reformat;
+  $('detail-reformat').textContent = '📦 Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно';
+  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true;
+  $('detail-remodel').textContent = withPrice('🔁 Слепить заново', 'model');
+
+  $('detail-sent').hidden = !(state.detailFresh && hasFile(o));
+  $('detail-note').textContent = {
+    sketch: isFlexiMode(o)
+      ? 'Это эскиз подвижной фигурки. Нравится — лепим модель, потом «⛓ Сделать подвижной». Нет — поправь словами или нарисуй другой вариант.'
+      : 'Это эскиз. Нравится — лепим из него 3D-модель. Нет — поправь словами или нарисуй другой вариант.',
+    cad: 'Размеры меняются в конструкторе — бесплатно. Поменять форму (отверстие, паз, надпись) — «✏️ Поправить словами».',
+    laser: 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.',
+    model: isStl(o)
       ? 'Файл STL открой в слайсере (Bambu Studio, PrusaSlicer, Cura) — и можно печатать.'
-      : '3MF в браузере не показываем — пришлю файл в чат, открой его в слайсере (Bambu Studio, PrusaSlicer, Cura).';
+      : '3MF в браузере не показываем — пришлю файл в чат, открой его в слайсере (Bambu Studio, PrusaSlicer, Cura).',
+  }[k];
+}
 
-  renderView();
-  window.scrollTo(0, 0);
+// Главная кнопка экрана работы.
+function detailMainText(o) {
+  if (!o) return '';
+  const k = kindOf(o);
+  if (k === 'sketch') return withPrice('✅ Лепим 3D-модель', 'model');
+  if (k === 'cad') return '📐 Открыть конструктор';
+  return hasFile(o) ? '📩 Прислать в чат' : '';
+}
 
-  tg.BackButton.show();
-  // «Прислать в чат» — только если файл есть.
-  if (hasFile(o)) tg.MainButton.setParams({ text: '📩 Прислать в чат', is_active: true, is_visible: true });
-  else tg.MainButton.hide();
+function onDetailMain() {
+  const o = state.detail;
+  if (!o) return;
+  const k = kindOf(o);
+  if (k === 'sketch') makeModel(o, state.detailFormat, true);
+  else if (k === 'cad') openCad(o.id);
+  else sendToChat();
+}
+
+// Эскиз → модель или «Слепить заново» из модели. flexi — если фигурка подвижная.
+function makeModel(o, format, fromMain) {
+  haptic();
+  const data = { kind: 'model', base_order: o.id, format: format || 'stl', title: o.title || '' };
+  if (isFlexiMode(o)) data.flexi = true;
+  startJob(data, o.title || '3D-модель', fromMain);
 }
 
 function closeDetail() {
   state.detail = null;
+  state.detailFresh = false;
   tg.MainButton.hideProgress();
-  tg.MainButton.hide();
-  tg.BackButton.hide();
   renderView();
   window.scrollTo(0, state.listScroll);
 }
@@ -404,14 +454,99 @@ function goBack() {
   if (state.viewer) closeViewer();
   else if (state.flexi) closeFlexi();
   else if (state.cad) closeCad();
+  else if (state.wait) closeWait();
+  else if (state.order) closeOrder();
   else if (state.detail) closeDetail();
 }
 
-// Одна кнопка Телеги на два экрана: на экране работы — «Прислать в чат», в конструкторе — файл детали.
+// Одна кнопка Телеги на все экраны — что она делает, решает экран сверху.
 function onMainButton() {
-  if (state.flexi) flexiExport();
-  else if (state.cad) cadExport();
-  else sendToChat();
+  const top = topScreen();
+  if (top === 'flexi') flexiExport();
+  else if (top === 'cad') cadExport();
+  else if (top === 'order') submitOrder();
+  else if (top === 'detail') onDetailMain();
+}
+
+function detailResize(mm) {
+  const o = state.detail;
+  if (!o) return;
+  const size = Math.round(Number(mm));
+  if (!(size >= 10 && size <= 1000)) {
+    hapticNotify('error');
+    toast('Размер — от 10 до 1000 мм');
+    return;
+  }
+  haptic();
+  startJob({ kind: 'laser_resize', base_order: o.id, size_mm: size, title: o.title || '' }, o.title || 'Чертёж', false);
+}
+
+function bindDetail() {
+  $('detail-3d').addEventListener('click', openViewer);
+  $('detail-cad').addEventListener('click', () => {
+    if (state.detail) openCad(state.detail.id);
+  });
+  $('detail-flexi').addEventListener('click', () => {
+    if (state.detail) openFlexi(state.detail.id);
+  });
+  $('detail-edit').addEventListener('click', () => {
+    if (state.detail) openOrderInEditor(state.detail);
+  });
+  $('detail-preview').addEventListener('click', () => {
+    if (state.detail && isStl(state.detail) && hasFile(state.detail)) openViewer();
+  });
+  document.querySelectorAll('#detail-format button').forEach((b) => {
+    b.addEventListener('click', () => {
+      haptic();
+      state.detailFormat = b.dataset.v;
+      renderDetail();
+    });
+  });
+  $('detail-ask').addEventListener('click', () => {
+    if (state.detail) openOrder('edit', { base: state.detail });
+  });
+  $('detail-again').addEventListener('click', () => {
+    const o = state.detail;
+    const saved = o && savedPrompt(o.id);
+    if (!saved) return;
+    haptic();
+    startJob({ kind: 'sketch', prompt: saved.prompt, flexi: saved.flexi, title: saved.title || o.title || '' }, saved.title || o.title, false);
+  });
+  $('detail-reformat').addEventListener('click', () => {
+    const o = state.detail;
+    if (!o) return;
+    haptic();
+    const format = fileFormat(o) === 'STL' ? '3mf' : 'stl';
+    startJob({ kind: 'model_format', format, title: o.title || '' }, o.title || '3D-модель', false);
+  });
+  $('detail-remodel').addEventListener('click', () => {
+    const o = state.detail;
+    if (!o) return;
+    haptic();
+    const price = jobPrice('model');
+    confirmBox('Слепить модель заново' + (price ? ' (' + price + ')' : '') + '?', (ok) => {
+      if (ok && state.detail === o) makeModel(o, String(o.format || 'stl').toLowerCase(), false);
+    });
+  });
+  $('detail-resize-btn').addEventListener('click', () => {
+    haptic();
+    $('detail-sizes').hidden = !$('detail-sizes').hidden;
+  });
+  document.querySelectorAll('#detail-sizes [data-mm]').forEach((c) => {
+    c.addEventListener('click', () => {
+      if (c.dataset.mm === 'custom') {
+        haptic();
+        $('resize-custom').hidden = false;
+        $('resize-input').focus();
+        return;
+      }
+      detailResize(c.dataset.mm);
+    });
+  });
+  $('resize-go').addEventListener('click', () => detailResize($('resize-input').value));
+  $('resize-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') detailResize($('resize-input').value);
+  });
 }
 
 async function sendToChat() {
@@ -421,7 +556,7 @@ async function sendToChat() {
   state.sending = true;
   tg.MainButton.showProgress(false);
   try {
-    await api({ a: 'send', id: o.id }, 45000);
+    await Api.send(o.id);
     hapticNotify('success');
     toast('Отправил в чат 👌');
   } catch (err) {
@@ -465,9 +600,10 @@ function renderBalance() {
   $('bal-models').textContent = '🧊 Оплаченных 3D-моделей: ' + formatNumber(modelsLeft);
   $('bal-models').hidden = modelsLeft <= 0;
 
-  const chip = $('balance-chip');
-  chip.textContent = 'Баланс: ' + formatNumber(balance) + ' кр.';
-  chip.hidden = false;
+  document.querySelectorAll('.balance-chip').forEach((chip) => {
+    chip.textContent = 'Баланс: ' + formatNumber(balance) + ' кр.';
+    chip.hidden = false;
+  });
 
   const packs = me.packs || [];
   const perCredit = (p) => p.stars / p.credits;
@@ -529,7 +665,7 @@ async function buy(pack, btn) {
   btn.disabled = true;
   btn.textContent = '…';
   try {
-    const data = await api({ a: 'buy', pack: pack.id });
+    const data = await Api.buy(pack);
     if (!data.link) throw new ApiError('bad_response');
     const before = paymentSnapshot();
     tg.openInvoice(data.link, (status) => {
@@ -572,11 +708,19 @@ async function loadMe(first) {
     renderSkeleton();
   }
   try {
-    state.me = await api({ a: 'me' });
+    state.me = await Api.me();
     state.lastLoad = Date.now();
     renderWorks();
     renderBalance();
     renderEditor();
+    renderCreate();
+    // открытый экран работы — свежие данные и цены
+    if (state.detail) {
+      const fresh = findOrder(state.detail.id);
+      if (fresh) state.detail = fresh;
+      renderDetail();
+    }
+    renderView();
   } catch (err) {
     if (first) showFatal(err);
     else if (err.code === 'auth') sessionExpired();
@@ -617,7 +761,7 @@ function openViewer() {
   $('viewer').hidden = false;
   document.body.classList.add('no-scroll');
   // чтобы свайп по модели не сворачивал приложение
-  if (supports('7.7')) try { tg.disableVerticalSwipes(); } catch (e) { /* ок */ }
+  tg.swipes(false);
   startViewer(o);
 }
 
@@ -629,7 +773,7 @@ function closeViewer() {
   state.viewer = false;
   $('viewer').hidden = true;
   document.body.classList.remove('no-scroll');
-  if (supports('7.7')) try { tg.enableVerticalSwipes(); } catch (e) { /* ок */ }
+  tg.swipes(!state.noSwipes);
 }
 
 function setViewerStatus(mode, text) {
@@ -671,14 +815,7 @@ async function fetchModel(o, token) {
 
   const ctrl = new AbortController();
   viewer.abort = ctrl;
-  const res = await fetchWithTimeout(apiUrl({ a: 'file', id: o.id }), 120000, ctrl.signal);
-  if (res.status === 401) throw new ApiError('auth');
-  const type = res.headers.get('content-type') || '';
-  if (!res.ok || type.indexOf('json') !== -1) {
-    let data = null;
-    try { data = await res.json(); } catch (e) { /* не JSON */ }
-    throw new ApiError(data && data.error === 'auth' ? 'auth' : (data && data.error) || 'http_' + res.status);
-  }
+  const res = await Api.download({ a: 'file', id: o.id }, 120000, ctrl.signal);
 
   const total = Number(res.headers.get('content-length')) || 0;
   let buffer;
@@ -860,30 +997,17 @@ function bindEvents() {
     });
   });
 
-  $('balance-chip').addEventListener('click', () => {
-    haptic();
-    setTab('balance');
+  document.querySelectorAll('.balance-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      haptic();
+      setTab('balance');
+    });
   });
 
-  // Плашка «первая 3D-модель в подарок» возвращает в чат с ботом.
-  $('gift').addEventListener('click', () => {
-    haptic('light');
-    tg.close();
-  });
+  // Плашка «первая 3D-модель в подарок» ведёт к 3D-фигурке.
+  $('gift').addEventListener('click', () => openOrder('3d'));
 
-  $('detail-3d').addEventListener('click', openViewer);
-  $('detail-cad').addEventListener('click', () => {
-    if (state.detail) openCad(state.detail.id);
-  });
-  $('detail-flexi').addEventListener('click', () => {
-    if (state.detail) openFlexi(state.detail.id);
-  });
-  $('detail-edit').addEventListener('click', () => {
-    if (state.detail) openOrderInEditor(state.detail);
-  });
-  $('detail-preview').addEventListener('click', () => {
-    if (state.detail && isStl(state.detail)) openViewer();
-  });
+  bindDetail();
 
   $('viewer-retry').addEventListener('click', () => {
     haptic();
@@ -896,6 +1020,8 @@ function bindEvents() {
     else loadMe(true);
   });
 
+  bindCreate();
+  bindJobs();
   bindEditor();
   bindCad();
   bindFlexi();
@@ -907,37 +1033,31 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) softRefresh();
   });
-  try { tg.onEvent('activated', softRefresh); } catch (e) { /* старый клиент */ }
+  tg.onActivated(softRefresh);
 }
 
 function start() {
-  if (!tg || !tg.initData) {
+  // Вне Телеги просим открыть из бота. ?mock=1 — проверка экранов в обычном браузере.
+  if (!tg.inside && !Api.mock) {
     showScreen('outside');
     return;
   }
-
   tg.ready();
-  tg.expand();
-  if (supports('6.1')) {
-    try {
-      tg.setHeaderColor('bg_color');
-      tg.setBackgroundColor('bg_color');
-    } catch (e) { /* ок */ }
-  }
 
-  // Ссылка с #editor (или startapp=editor) сразу открывает «Редактор».
+  // Обычно открываемся на «✨ Создать». Ссылка с #editor (или startapp=editor) — сразу «Редактор»,
+  // ?cad= и ?flexi= — конструктор и сборщик поверх «Моих работ».
   const path = location.hash.replace(/^#/, '').split(/[?&]/)[0];
-  const startParam = tg.initDataUnsafe && tg.initDataUnsafe.start_param;
-  if (path === 'editor' || startParam === 'editor') state.tab = 'editor';
+  const cadId = cadIdFromUrl();
+  const flexiId = flexiIdFromUrl();
+  if (path === 'editor' || tg.startParam === 'editor') state.tab = 'editor';
+  else if (cadId || flexiId) state.tab = 'works';
 
   bindEvents();
   loadMe(true);
+  jobsResume(state.tab === 'create');
 
-  // Бот открывает конструктор кнопкой «📐 Открыть конструктор» со ссылкой ?cad=<id>.
-  const cadId = cadIdFromUrl();
-  const flexiId = flexiIdFromUrl();
-  if (flexiId) openFlexi(flexiId); // бот: кнопка «🦴 Собрать шарниры» → ?flexi=<id>
-  else if (cadId) openCad(cadId);
+  if (flexiId) openFlexi(flexiId); // бот: кнопка «⛓ Сделать подвижной» → ?flexi=<id>
+  else if (cadId) openCad(cadId); // бот: кнопка «📐 Открыть конструктор» → ?cad=<id>
 }
 
 // editor.js подключается после этого файла — стартуем, когда загрузятся оба.

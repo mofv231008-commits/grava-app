@@ -115,7 +115,7 @@ button {
 .view {
   padding: 16px 16px calc(var(--tabbar-h) + var(--safe-bottom) + 24px);
 }
-#view-detail { padding-bottom: calc(var(--safe-bottom) + 24px); }
+#view-detail, #view-order, #view-wait { padding-bottom: calc(var(--safe-bottom) + 24px); }
 
 .page-head {
   display: flex;
@@ -648,7 +648,6 @@ body.no-tabbar .toast { bottom: calc(var(--safe-bottom) + 16px); }
 }
 
 /* Правка работы из «Мои работы» */
-.detail-edit { margin-top: 10px; }
 .ed-work {
   display: flex;
   align-items: center;
@@ -957,3 +956,276 @@ body.no-tabbar .toast { bottom: calc(var(--safe-bottom) + 16px); }
 .flexi-summary + .flexi-stale { margin-top: 8px; }
 .flexi-chains { margin-top: 10px; font-size: 14px; color: var(--hint); text-align: center; }
 .flexi-chains:empty { display: none; }
+
+/* ---------- Вкладка «Создать» ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 150px;
+  padding: 16px 14px 14px;
+  border-radius: var(--radius);
+  background: var(--card);
+  text-align: left;
+  transition: transform .12s ease;
+}
+.tile:active { transform: scale(.97); }
+.tile-emoji { font-size: 40px; line-height: 1; }
+.tile-title { margin-top: auto; font-size: 16px; font-weight: 700; line-height: 1.2; }
+.tile-price { min-height: 2.5em; font-size: 12.5px; line-height: 1.25; color: var(--hint); }
+
+.jobs-bar { display: grid; gap: 8px; margin-bottom: 14px; }
+.job-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: inset 4px 0 0 var(--accent);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+}
+.job-pill:active { opacity: .75; }
+.job-pill.is-error { box-shadow: inset 4px 0 0 var(--tg-theme-destructive-text-color, #e53935); }
+.job-pill.is-no_credits, .job-pill.is-reply { box-shadow: inset 4px 0 0 #f5b400; }
+.job-pill-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.job-pill-go { flex-shrink: 0; color: var(--hint); font-size: 20px; line-height: 1; }
+
+.continue-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.mini { display: flex; flex-direction: column; gap: 6px; min-width: 0; text-align: left; transition: transform .12s ease; }
+.mini:active { transform: scale(.96); }
+.mini .thumb { border-radius: 12px; }
+.mini .placeholder { font-size: 32px; }
+.mini-title { font-size: 12.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ---------- Экран заказа ---------- */
+.order-title { margin: 4px 0 14px; font-size: 24px; font-weight: 700; letter-spacing: -.2px; }
+.order-lead { margin: 0 4px 14px; font-size: 15px; }
+.order-base {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--card);
+}
+.order-base-thumb { width: 56px; height: 56px; flex-shrink: 0; border-radius: 10px; background: var(--bg); }
+.order-base-thumb .placeholder { font-size: 26px; }
+.order-base-name { flex: 1; min-width: 0; font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.order-chips .chip { color: var(--accent); font-weight: 500; font-size: 13.5px; white-space: normal; text-align: left; }
+.order-chips .chip.is-current { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ed-label-sub { font-weight: 400; color: var(--hint); }
+.order-hint { margin: 8px 4px 0; font-size: 13px; color: var(--hint); }
+.order-photos-block { margin-top: 16px; }
+
+.opts { display: grid; gap: 8px; }
+.opt {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 48px;
+  justify-content: center;
+  padding: 10px 14px 10px 46px;
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+}
+.opt::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--hint);
+}
+.opt.is-active::before { box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 6px var(--card), inset 0 0 0 10px var(--accent); }
+.opt b { font-size: 15px; font-weight: 600; }
+.opt span { font-size: 13px; color: var(--hint); }
+
+.photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.photos.is-single { grid-template-columns: 1fr; }
+.photo { position: relative; aspect-ratio: 1 / 1; border-radius: 12px; overflow: hidden; background: var(--card); }
+.photos.is-single .photo { aspect-ratio: 4 / 3; }
+.photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.photos.is-single .photo img { object-fit: contain; }
+.photo.is-loading { display: flex; align-items: center; justify-content: center; }
+.photo .spinner { width: 28px; height: 28px; border-color: var(--bg); border-top-color: var(--accent); }
+.photo-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, .55);
+  color: #ffffff;
+  font-size: 20px;
+  line-height: 30px;
+}
+.photo-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.photo-btns .btn { padding: 0 8px; }
+
+.order-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  cursor: pointer;
+}
+.order-toggle-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.order-toggle-text b { font-size: 15px; font-weight: 600; }
+.order-toggle-text span { font-size: 13px; color: var(--hint); }
+
+/* ---------- Экран ожидания ---------- */
+.wait { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.wait-anim { position: relative; width: 168px; height: 168px; margin: 36px auto 6px; }
+.wait-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 40%, var(--accent));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  animation: spin 3s linear infinite;
+}
+.wait-core {
+  position: absolute;
+  inset: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 64px;
+  animation: breathe 4s ease-in-out infinite;
+}
+@keyframes breathe { 50% { transform: scale(1.06); } }
+.wait.is-done .wait-ring { display: none; }
+.wait.is-done .wait-core { inset: 0; animation: none; }
+.wait-title { margin-top: 18px; font-size: 22px; font-weight: 700; line-height: 1.25; }
+#wait-progress { width: 100%; }
+.wait-stage { margin-top: 8px; min-height: 1.35em; font-size: 16px; }
+.wait-bar { width: 200px; height: 4px; margin: 16px auto 0; border-radius: 2px; background: var(--card); overflow: hidden; }
+.wait-bar-fill { width: 0; height: 100%; border-radius: 2px; background: var(--accent); transition: width 1s linear; }
+.wait-eta { margin-top: 8px; min-height: 1.35em; font-size: 13px; color: var(--hint); }
+.wait-result {
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 15px;
+  text-align: left;
+}
+.wait-result p { white-space: pre-wrap; }
+.wait-actions { display: grid; gap: 10px; width: 100%; margin-top: 28px; }
+.wait-note { text-align: center; }
+@media (prefers-reduced-motion: reduce) {
+  .wait-ring { animation-duration: 10s; }
+  .wait-core { animation: none; }
+}
+
+/* ---------- Экран работы: действия ---------- */
+.detail-format {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 15px;
+  font-weight: 600;
+}
+.detail-format .segmented { flex: 0 0 140px; background: var(--bg); }
+.detail-format .segmented button.is-active { background: var(--accent); color: var(--accent-text); }
+.detail-actions { display: grid; gap: 10px; }
+.detail-sizes { margin-top: 2px; }
+.resize-custom { display: flex; gap: 8px; margin-top: 10px; }
+.resize-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+.resize-input:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.cad-ask { margin-top: 10px; }
+.work-badge.is-sketch { background: var(--bg); color: var(--text); opacity: .92; }
+
+/* ---------- Вне Телеги: своя главная кнопка и «назад» ---------- */
+.mainbtn {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--safe-bottom) + 12px);
+  z-index: 15;
+  min-height: 50px;
+  padding: 0 16px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+}
+.mainbtn:active { opacity: .85; }
+.mainbtn.is-inactive { opacity: .55; }
+.mainbtn.is-progress::after {
+  content: '';
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: currentColor;
+  vertical-align: middle;
+  animation: spin .8s linear infinite;
+}
+body.has-mainbtn .view { padding-bottom: calc(var(--safe-bottom) + 86px); }
+body.has-mainbtn .toast { bottom: calc(var(--safe-bottom) + 76px); }
+.backbtn {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 25;
+  height: 36px;
+  padding: 0 14px 0 10px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
+}
+body.has-backbtn #app { padding-top: 44px; }

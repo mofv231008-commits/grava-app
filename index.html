@@ -6,7 +6,7 @@
   <meta name="format-detection" content="telephone=no">
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
   <!-- Открыли не из Телеги -->
@@ -29,28 +29,179 @@
   </section>
 
   <main id="app" hidden>
+    <!-- Вкладка «✨ Создать» -->
+    <section id="view-create" class="view">
+      <header class="page-head">
+        <h1>Создать</h1>
+        <button class="chip balance-chip" type="button" hidden></button>
+      </header>
+      <div id="jobs-bar" class="jobs-bar" hidden></div>
+      <div class="tiles">
+        <button class="tile" data-form="laser" type="button">
+          <span class="tile-emoji">🔥</span>
+          <span class="tile-title">Чертёж для лазера</span>
+          <span class="tile-price"></span>
+        </button>
+        <button class="tile" data-form="3d" type="button">
+          <span class="tile-emoji">🧊</span>
+          <span class="tile-title">3D-фигурка</span>
+          <span class="tile-price"></span>
+        </button>
+        <button class="tile" data-form="cad" type="button">
+          <span class="tile-emoji">📐</span>
+          <span class="tile-title">Деталь по размерам</span>
+          <span class="tile-price"></span>
+        </button>
+        <button class="tile" data-form="scan" type="button">
+          <span class="tile-emoji">📷</span>
+          <span class="tile-title">Скан по фото</span>
+          <span class="tile-price"></span>
+        </button>
+      </div>
+      <div id="continue" hidden>
+        <h2 class="section-title">Продолжить</h2>
+        <div class="continue-row" id="continue-row"></div>
+      </div>
+    </section>
+
+    <!-- Экран заказа: лазер, 3D, деталь, скан, правка словами -->
+    <section id="view-order" class="view" hidden>
+      <h1 class="order-title" id="order-title"></h1>
+      <div class="order-base" id="order-base" hidden>
+        <div class="thumb order-base-thumb" id="order-base-thumb"></div>
+        <div class="order-base-name" id="order-base-name"></div>
+      </div>
+      <p class="order-lead" id="order-lead" hidden></p>
+      <div class="segmented order-modes" id="order-modes" hidden>
+        <button type="button" data-mode="text">✍️ Описать</button>
+        <button type="button" data-mode="photo">🖼 По фото</button>
+      </div>
+
+      <div id="order-text">
+        <label class="ed-label" for="order-prompt" id="order-label"></label>
+        <textarea id="order-prompt" class="ed-prompt" rows="4" maxlength="1500"></textarea>
+        <div class="order-chips" id="order-chips"></div>
+      </div>
+
+      <div id="order-photos-block" class="order-photos-block" hidden>
+        <div class="photos" id="order-photos"></div>
+        <div class="photo-btns" id="photo-btns">
+          <button type="button" class="btn btn-secondary" id="photo-pick">🖼 Выбрать фото</button>
+          <button type="button" class="btn btn-secondary" id="photo-shot">📷 Снять</button>
+        </div>
+        <p class="order-hint" id="photo-count" hidden></p>
+        <input type="file" id="photo-input" accept="image/*" hidden>
+        <input type="file" id="photo-camera" accept="image/*" capture="environment" hidden>
+      </div>
+
+      <div id="order-photo-mode" hidden>
+        <h2 class="section-title">Как перевести фото</h2>
+        <div class="opts">
+          <button type="button" class="opt" data-v="redraw"><b>Перерисовать в рисунок</b><span>Нарисую картинку по мотивам фото</span></button>
+          <button type="button" class="opt" data-v="trace"><b>Обвести как есть</b><span>Контуры точно как на фото — для логотипов и рисунков</span></button>
+        </div>
+      </div>
+
+      <div id="order-extra-block" hidden>
+        <label class="ed-label" for="order-extra">Что поменять? <span class="ed-label-sub">необязательно</span></label>
+        <textarea id="order-extra" class="ed-prompt" rows="2" maxlength="1500" placeholder="например: сделай его толще, без подставки"></textarea>
+      </div>
+
+      <label class="order-toggle" id="order-flexi-row" hidden>
+        <span class="order-toggle-text"><b>🦎 Подвижная на шарнирах</b><span>лучше животные: ящерица, дракон, осьминог</span></span>
+        <input type="checkbox" class="cad-switch" id="order-flexi">
+      </label>
+
+      <div id="order-format" hidden>
+        <h2 class="section-title">Для чего файл</h2>
+        <div class="opts">
+          <button type="button" class="opt" data-v="stl"><b>Для 3D-печати (STL)</b></button>
+          <button type="button" class="opt" data-v="dxf"><b>Для лазера (DXF)</b></button>
+          <button type="button" class="opt" data-v=""><b>Сам реши</b></button>
+        </div>
+      </div>
+
+      <p class="note" id="order-note"></p>
+    </section>
+
+    <!-- Экран ожидания -->
+    <section id="view-wait" class="view wait" hidden>
+      <div class="wait-anim">
+        <div class="wait-ring"></div>
+        <div class="wait-core" id="wait-emoji">🧊</div>
+      </div>
+      <h1 class="wait-title" id="wait-title"></h1>
+      <div id="wait-progress">
+        <p class="wait-stage" id="wait-stage"></p>
+        <div class="wait-bar"><div class="wait-bar-fill" id="wait-bar"></div></div>
+        <p class="wait-eta" id="wait-eta"></p>
+      </div>
+      <div class="wait-result" id="wait-result" hidden>
+        <p id="wait-text"></p>
+      </div>
+      <div class="wait-actions">
+        <button class="btn btn-primary btn-wide" id="wait-retry" type="button" hidden>Попробовать ещё раз</button>
+        <button class="btn btn-primary btn-wide" id="wait-topup" type="button" hidden>💰 Пополнить</button>
+        <button class="btn btn-secondary btn-wide" id="wait-change" type="button" hidden>✏️ Изменить запрос</button>
+        <button class="btn btn-secondary btn-wide" id="wait-hide" type="button">Свернуть</button>
+      </div>
+      <p class="note wait-note" id="wait-note">Можно закрыть приложение — результат придёт в чат</p>
+    </section>
+
     <!-- Вкладка «Мои работы» -->
-    <section id="view-works" class="view">
+    <section id="view-works" class="view" hidden>
       <header class="page-head">
         <h1>Мои работы</h1>
-        <button class="chip" id="balance-chip" type="button" hidden></button>
+        <button class="chip balance-chip" type="button" hidden></button>
       </header>
       <div id="works-grid" class="grid"></div>
       <div id="works-empty" class="empty" hidden>
         <div class="empty-emoji">✏️</div>
-        <p>Пока пусто — опиши идею боту, и работа появится здесь</p>
+        <p>Пока пусто — создай первую работу на вкладке ✨ Создать</p>
       </div>
     </section>
 
-    <!-- Экран одной работы -->
+    <!-- Экран работы: и готовый результат, и работа из «Моих работ» -->
     <section id="view-detail" class="view" hidden>
       <div class="detail-preview" id="detail-preview"></div>
       <h1 class="detail-title" id="detail-title"></h1>
       <div class="detail-meta" id="detail-meta"></div>
-      <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
-      <button class="btn btn-secondary btn-wide detail-edit" id="detail-edit" type="button" hidden>✏️ Править в редакторе</button>
-      <button class="btn btn-secondary btn-wide detail-edit" id="detail-cad" type="button" hidden>📐 В конструктор</button>
-      <button class="btn btn-secondary btn-wide detail-edit" id="detail-flexi" type="button" hidden>🦴 Собрать шарниры</button>
+      <div class="detail-format" id="detail-format" hidden>
+        <span>Формат модели</span>
+        <div class="segmented">
+          <button type="button" data-v="stl">STL</button>
+          <button type="button" data-v="3mf">3MF</button>
+        </div>
+      </div>
+      <div class="detail-actions">
+        <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden>🧊 Покрутить в 3D</button>
+        <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden>⛓ Сделать подвижной</button>
+        <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden>📐 В конструктор</button>
+        <div id="detail-resize" hidden>
+          <button class="btn btn-secondary btn-wide" id="detail-resize-btn" type="button">📐 Другой размер</button>
+          <div class="detail-sizes" id="detail-sizes" hidden>
+            <div class="order-chips">
+              <button class="chip" type="button" data-mm="50">50 мм</button>
+              <button class="chip" type="button" data-mm="100">100 мм</button>
+              <button class="chip" type="button" data-mm="150">150 мм</button>
+              <button class="chip" type="button" data-mm="200">200 мм</button>
+              <button class="chip" type="button" data-mm="300">300 мм</button>
+              <button class="chip" type="button" data-mm="custom">свой</button>
+            </div>
+            <div class="resize-custom" id="resize-custom" hidden>
+              <input class="resize-input" id="resize-input" type="number" inputmode="numeric" min="10" max="1000" placeholder="Размер, мм">
+              <button class="btn btn-primary" id="resize-go" type="button">Сделать</button>
+            </div>
+            <p class="order-hint">Длинная сторона, от 10 до 1000 мм · бесплатно</p>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-wide" id="detail-ask" type="button" hidden>✏️ Поправить словами</button>
+        <button class="btn btn-secondary btn-wide" id="detail-edit" type="button" hidden>🖌 В редакторе</button>
+        <button class="btn btn-secondary btn-wide" id="detail-again" type="button" hidden>🔄 Другой вариант</button>
+        <button class="btn btn-secondary btn-wide" id="detail-reformat" type="button" hidden>📦 Другой формат</button>
+        <button class="btn btn-secondary btn-wide" id="detail-remodel" type="button" hidden>🔁 Слепить заново</button>
+      </div>
+      <p class="note" id="detail-sent" hidden>Файл также пришёл в чат с ботом</p>
       <p class="note" id="detail-note"></p>
     </section>
 
@@ -69,7 +220,7 @@
 
       <button class="gift" id="gift" type="button" hidden>
         <span class="gift-title">🎁 Первая 3D-модель — в подарок!</span>
-        <span class="gift-text">Опиши идею боту — кредиты не спишутся</span>
+        <span class="gift-text">Сделай фигурку на вкладке ✨ Создать — кредиты не спишутся</span>
       </button>
 
       <h2 class="section-title">Цены</h2>
@@ -202,12 +353,13 @@
             <pre id="cad-log"></pre>
           </details>
           <button class="btn btn-primary btn-wide" id="cad-fix" type="button">🔧 Починить нейронкой</button>
-          <p class="cad-fix-limit" id="cad-fix-limit" hidden>Лимит починок исчерпан. Опиши в чате, что не так, — бот перечертит (1 кр.)</p>
+          <p class="cad-fix-limit" id="cad-fix-limit" hidden>Лимит починок исчерпан. Нажми «✏️ Поправить словами» и опиши, что не так, — перечерчу</p>
         </div>
 
         <div id="cad-params" class="cad-params"></div>
         <button class="btn btn-secondary btn-wide cad-reset" id="cad-reset" type="button" hidden>↺ Вернуть размеры</button>
-        <p class="note">Размеры здесь меняются бесплатно. Поменять форму (добавить отверстие, паз, надпись) — напиши в чате словами, 1 кр.</p>
+        <button class="btn btn-secondary btn-wide cad-ask" id="cad-ask" type="button" hidden>✏️ Поправить словами</button>
+        <p class="note">Размеры здесь меняются бесплатно. Поменять форму (добавить отверстие, паз, надпись) — «✏️ Поправить словами».</p>
         <p class="cad-credit">Движок: <a href="https://github.com/openscad/openscad" id="cad-credit" target="_blank" rel="noopener">OpenSCAD (GPL-2.0)</a></p>
       </div>
     </section>
@@ -220,7 +372,7 @@
 
       <div id="ed-empty" class="empty" hidden>
         <div class="empty-emoji">✏️</div>
-        <p>Пока нечего править — сначала сделай эскиз или чертёж в боте</p>
+        <p>Пока нечего править — сначала сделай эскиз или чертёж на вкладке ✨ Создать</p>
       </div>
 
       <div id="ed-main" hidden>
@@ -295,7 +447,11 @@
 
   <!-- Нижняя панель вкладок -->
   <nav id="tabbar" class="tabbar" hidden>
-    <button class="tab is-active" data-tab="works" type="button">
+    <button class="tab is-active" data-tab="create" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 2.5c.5 3.9 2.6 6 6.5 6.5-3.9.5-6 2.6-6.5 6.5-.5-3.9-2.6-6-6.5-6.5 3.9-.5 6-2.6 6.5-6.5zM18.5 13c.3 2.3 1.4 3.4 3.5 3.75-2.1.35-3.2 1.45-3.5 3.75-.3-2.3-1.4-3.4-3.5-3.75 2.1-.35 3.2-1.45 3.5-3.75zM5.5 15.5c.2 1.6 1 2.4 2.5 2.6-1.5.2-2.3 1-2.5 2.6-.2-1.6-1-2.4-2.5-2.6 1.5-.2 2.3-1 2.5-2.6z"/></svg>
+      <span>Создать</span>
+    </button>
+    <button class="tab" data-tab="works" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>
       <span>Мои работы</span>
     </button>
@@ -326,6 +482,10 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <!-- Вне Телеги: своя главная кнопка и «назад» (tg.js) -->
+  <button id="backbtn" class="backbtn" type="button" hidden>‹ Назад</button>
+  <button id="mainbtn" class="mainbtn" type="button" hidden></button>
+
   <!-- Затемнение, пока отправляется правка -->
   <div id="busy" class="busy" hidden>
     <div class="busy-card">
@@ -334,9 +494,13 @@
     </div>
   </div>
 
-  <script src="app.js?v=8"></script>
-  <script src="editor.js?v=6"></script>
-  <script src="cad.js?v=1"></script>
-  <script src="flexi.js?v=12"></script>
+  <script src="tg.js?v=1"></script>
+  <script src="api.js?v=1"></script>
+  <script src="app.js?v=9"></script>
+  <script src="jobs.js?v=1"></script>
+  <script src="create.js?v=1"></script>
+  <script src="editor.js?v=7"></script>
+  <script src="cad.js?v=2"></script>
+  <script src="flexi.js?v=13"></script>
 </body>
 </html>

@@ -1,8 +1,7 @@
 /* Грава — вкладка «Редактор»: правка последнего эскиза или чертежа.
-   Использует помощники из app.js (tg, state, $, apiUrl, haptic…). */
+   Использует помощники из app.js (state, $…), tg.js и api.js. */
 'use strict';
 
-const EDIT_API = 'https://engrave.app.n8n.cloud/webhook/grava-app-edit';
 const ED_MAX_SIDE = 1536;      // больше этого картинку уменьшаем
 const ED_HISTORY = 20;         // шагов «Отменить»
 const ED_MARK_ALPHA = 0.45;    // красная обводка: rgba(255,0,0,0.45)
@@ -48,7 +47,7 @@ function edAvailable() {
 }
 
 function edWhatForOrder(o) {
-  return o.kind === 'model' ? 'sketch' : 'drawing';
+  return isModel(o) || isSketch(o) ? 'sketch' : 'drawing';
 }
 
 function renderEditor() {
@@ -72,9 +71,11 @@ function renderEditor() {
   if (order) {
     ed.what = edWhatForOrder(order);
     $('ed-work-name').textContent = order.title || 'Без названия';
-    $('ed-work-note').textContent = ed.what === 'sketch'
-      ? 'Правишь эскиз, из которого слеплена модель. После отправки выбери размер в чате — бот слепит новую модель (5 кр., подарок или оплаченная модель)'
-      : 'После отправки нажми в чате «🔥 Собрать DXF»';
+    $('ed-work-note').textContent = isSketch(order)
+      ? 'После отправки эскиз придёт в чат — там выбери размер, и бот слепит модель'
+      : ed.what === 'sketch'
+        ? 'Правишь эскиз, из которого слеплена модель. После отправки выбери размер в чате — бот слепит новую модель (5 кр., подарок или оплаченная модель)'
+        : 'После отправки нажми в чате «🔥 Собрать DXF»';
   } else {
     if (avail.indexOf(ed.what) === -1) ed.what = avail[0];
     document.querySelectorAll('#ed-switch button').forEach((b) => {
@@ -170,14 +171,7 @@ async function edLoad() {
   edStatus('loading');
   edUpdateButtons();
   try {
-    const res = await fetchWithTimeout(apiUrl(params), 60000);
-    if (res.status === 401) throw new ApiError('auth');
-    const type = res.headers.get('content-type') || '';
-    if (!res.ok || type.indexOf('json') !== -1) {
-      let data = null;
-      try { data = await res.json(); } catch (e) { /* не JSON */ }
-      throw new ApiError(data && data.error === 'auth' ? 'auth' : 'http_' + res.status);
-    }
+    const res = await Api.download(params, 60000);
     const blob = await res.blob();
     const img = await edDecode(blob);
     if (token !== ed.token) return;
@@ -716,7 +710,7 @@ async function edSend(kind) {
     return;
   }
 
-  const params = { initData: tg.initData, a: kind, what: ed.what, image };
+  const params = { a: kind, what: ed.what, image };
   if (ed.order) params.title = ed.order.title || ''; // бот подпишет правку названием работы
   if (kind === 'ai') {
     params.prompt = prompt;
@@ -724,23 +718,11 @@ async function edSend(kind) {
   }
 
   edBusy(true, kind === 'ai' ? 'Нейронка правит… ~30 секунд' : 'Отправляю…');
-  let status = 0;
-  let data = null;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ED_SEND_TIMEOUT);
-  try {
-    // URLSearchParams → form-urlencoded: простой запрос, без CORS-preflight.
-    const res = await fetch(EDIT_API, { method: 'POST', body: new URLSearchParams(params), signal: ctrl.signal });
-    status = res.status;
-    try { data = await res.json(); } catch (e) { /* не JSON */ }
-  } catch (e) {
-    status = 0;
-  } finally {
-    clearTimeout(timer);
-    edBusy(false);
-  }
+  const r = await Api.edit(params, ED_SEND_TIMEOUT);
+  const data = r.data;
+  edBusy(false);
 
-  if (status === 401 || (data && data.error === 'auth')) {
+  if (Api.isAuth(r)) {
     sessionExpired();
   } else if (data && data.ok === true) {
     if (data.balance != null && state.me) {
@@ -748,12 +730,7 @@ async function edSend(kind) {
       renderBalance();
     }
     hapticNotify('success');
-    if (supports('6.2')) {
-      tg.showAlert('Готово! Правка в чате 👌', () => tg.close());
-    } else {
-      window.alert('Готово! Правка в чате 👌');
-      tg.close();
-    }
+    alertBox('Готово! Правка в чате 👌', () => tg.close());
   } else if (data && data.error === 'no_credits') {
     edNoCredits();
   } else {
@@ -763,17 +740,7 @@ async function edSend(kind) {
 }
 
 function edNoCredits() {
-  hapticNotify('error');
-  const goBalance = () => setTab('balance');
-  if (supports('6.2')) {
-    tg.showPopup({
-      title: 'Не хватает кредитов',
-      message: 'Пополни баланс — и попробуй ещё раз.',
-      buttons: [{ id: 'balance', type: 'default', text: 'Перейти в «Баланс»' }, { type: 'cancel' }],
-    }, (id) => { if (id === 'balance') goBalance(); });
-  } else if (window.confirm('Не хватает кредитов. Перейти в «Баланс»?')) {
-    goBalance();
-  }
+  noCreditsPopup();
 }
 
 /* ---------- Кнопки ---------- */

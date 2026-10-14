@@ -1,11 +1,10 @@
 /* Грава — конструктор деталей по размерам (OpenSCAD в телефоне).
-   Использует помощники из app.js (tg, state, $, api, apiUrl, haptic, loadThree…). */
+   Использует помощники из app.js (state, $, loadThree…), tg.js и api.js. */
 'use strict';
 
-const CAD_API = 'https://engrave.app.n8n.cloud/webhook/grava-app-cad';
 const CAD_WASM_URL = './vendor/openscad/openscad.wasm?v=1';
 const CAD_WASM_SIZE = 9603115;            // размер openscad.wasm — для процентов загрузки
-const CAD_WORKER_URL = './cad-worker.js?v=1';
+const CAD_WORKER_URL = './cad-worker.js?v=2';
 const CAD_RENDER_TIMEOUT = 90000;
 const CAD_FIX_TIMEOUT = 240000;
 const CAD_EXPORT_TIMEOUT = 120000;
@@ -264,6 +263,7 @@ function openCad(id) {
   $('cad-format').hidden = true;
   $('cad-params').textContent = '';
   $('cad-reset').hidden = true;
+  $('cad-ask').hidden = true;
   $('cad-error').hidden = true;
   $('cad-dims').textContent = '';
   $('cad-stage').textContent = '';
@@ -278,7 +278,7 @@ function openCad(id) {
   cadPost({ a: 'select', id }, 15000);
   cadEnsureEngine();
 
-  api({ a: 'cad', id })
+  Api.cad(id)
     .then((data) => {
       if (state.cad !== c) return;
       cadSetData(data);
@@ -315,6 +315,8 @@ function cadSetData(data) {
   $('cad-format').textContent = c.format === 'dxf' ? '🔥 DXF для лазера' : '🧊 STL для 3D-принтера';
   $('cad-format').hidden = false;
   $('cad-preview').classList.toggle('is-sheet', c.format === 'dxf');
+  $('cad-ask').textContent = withPrice('✏️ Поправить словами', 'cad_edit');
+  $('cad-ask').hidden = false;
   cadSetCode(String(data.scad || ''));
 }
 
@@ -975,27 +977,22 @@ function cadBlobToDataUrl(bytes) {
   });
 }
 
-async function cadPost(params, timeoutMs) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  let status = 0;
-  let data = null;
-  try {
-    // URLSearchParams → form-urlencoded: простой запрос, без CORS-preflight.
-    const body = new URLSearchParams(Object.assign({ initData: tg.initData }, params));
-    const res = await fetch(CAD_API, { method: 'POST', body, signal: ctrl.signal });
-    status = res.status;
-    try { data = await res.json(); } catch (e) { /* не JSON */ }
-  } catch (e) {
-    status = 0;
-  } finally {
-    clearTimeout(timer);
-  }
-  return { status, data };
+function cadPost(params, timeoutMs) {
+  return Api.cadPost(params, timeoutMs);
 }
 
 function cadIsAuth(r) {
-  return r.status === 401 || (r.data && r.data.error === 'auth');
+  return Api.isAuth(r);
+}
+
+// «✏️ Поправить словами»: форма правки, после неё — снова в конструктор.
+function cadAsk() {
+  const c = state.cad;
+  if (!c || !c.data || state.cadBusy) return;
+  const base = findOrder(c.id) || { id: c.id, kind: 'cad', title: c.data.title || 'Деталь по размерам' };
+  const id = c.id;
+  closeCad();
+  openOrder('edit', { base, returnCad: id });
 }
 
 async function cadExport() {
@@ -1073,7 +1070,7 @@ async function cadFix() {
     c.fixesLeft = 0;
     cadRenderFix();
     hapticNotify('error');
-    alertBox('Лимит починок исчерпан. Опиши в чате, что не так, — бот перечертит (1 кр.)');
+    alertBox('Лимит починок исчерпан. Нажми «✏️ Поправить словами» и опиши, что не так, — перечерчу');
   } else {
     hapticNotify('error');
     alertBox('Не вышло, попробуй ещё раз');
@@ -1085,6 +1082,7 @@ async function cadFix() {
 function bindCad() {
   $('cad-reset').addEventListener('click', cadResetParams);
   $('cad-fix').addEventListener('click', cadFix);
+  $('cad-ask').addEventListener('click', cadAsk);
   $('cad-engine-retry').addEventListener('click', cadRetryEngine);
   $('cad-missing-btn').addEventListener('click', () => {
     haptic();
@@ -1095,7 +1093,7 @@ function bindCad() {
   });
   $('cad-credit').addEventListener('click', (e) => {
     e.preventDefault();
-    try { tg.openLink('https://github.com/openscad/openscad'); } catch (err) { window.open('https://github.com/openscad/openscad', '_blank'); }
+    tg.openLink('https://github.com/openscad/openscad');
   });
   const stage = $('cad-stage');
   ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach((t) => stage.addEventListener(t, cadSvgPointer));
