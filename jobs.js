@@ -158,7 +158,7 @@ async function startJob(data, title, fromMain) {
     jobs.list.unshift(j);
     jobsSave();
     renderJobsBar();
-    if (state.order) dropOrderDraft(state.order.form);
+    if (state.order) orderCreated(state.order);
     state.order = null;
     state.detail = null;
     openWait(j.id);

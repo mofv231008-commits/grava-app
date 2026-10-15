@@ -1,10 +1,13 @@
-/* Грава — вкладка «✨ Создать»: плитки, «Продолжить» и экраны заказа (лазер, 3D, деталь, скан, правка словами).
+/* Грава — вкладка «✨ Создать»: черновик из чата, плитки, «Продолжить»
+   и экраны заказа (лазер, 3D, деталь, скан, правка словами).
    Использует помощники из app.js и jobs.js. */
 'use strict';
 
 const PHOTO_MAX_SIDE = 1600;
 const PHOTO_MAX_BYTES = 7 * 1024 * 1024;
 const PROMPT_MAX = 1500;
+const DRAFT_USED_KEY = 'grava.draftUsed';
+const DRAFT_MAX_PHOTOS = 6;
 
 const FORMS = {
   laser: {
@@ -62,6 +65,7 @@ const EDIT_PLACEHOLDERS = {
 };
 
 const orderDrafts = {}; // недописанные формы — вернулся назад и снова зашёл, текст на месте
+const chat = { draft: null, seq: 0, shownAt: null }; // черновик из чата
 
 function editKind(o) {
   if (!o) return 'laser_edit';
@@ -139,6 +143,135 @@ function renderCreate() {
   renderJobsBar();
 }
 
+/* ---------- Черновик из чата ---------- */
+/* Бот больше не принимает заказы: текст и фото из чата он сохраняет черновиком
+   и присылает кнопку «🚀 Открыть и продолжить» (?draft=1). */
+
+function draftUsedAt() {
+  try { return localStorage.getItem(DRAFT_USED_KEY) || ''; } catch (e) { return ''; }
+}
+
+// Черновик использован или отклонён — карточка с ним больше не появится.
+function markDraftUsed(at) {
+  try { localStorage.setItem(DRAFT_USED_KEY, at); } catch (e) { /* приватный режим */ }
+  if (chat.draft && chat.draft.at === at) chat.draft = null;
+  renderDraftCard();
+}
+
+// Спрашиваем при старте и при каждом открытии «Создать». Нет черновика или ошибка — молча ничего.
+async function loadChatDraft() {
+  const seq = ++chat.seq;
+  let d;
+  try {
+    d = (await Api.chatDraft()).draft || null;
+  } catch (e) {
+    return;
+  }
+  if (seq !== chat.seq) return;
+  const photos = Math.min(DRAFT_MAX_PHOTOS, Number(d && d.photos) || 0);
+  const text = String((d && d.text) || '').trim();
+  chat.draft = d && d.at && d.at !== draftUsedAt() && (text || photos)
+    ? { text, photos, at: String(d.at) }
+    : null;
+  renderDraftCard();
+}
+
+// Что можно сделать из черновика — зависит от числа фото.
+function draftVariants(d) {
+  if (d.photos === 0) {
+    return [
+      { label: '🔥 Чертёж для лазера', form: 'laser' },
+      { label: '🧊 3D-фигурка', form: '3d' },
+      { label: '🦎 Подвижная фигурка', form: '3d', flexi: true },
+      { label: '📐 Деталь по размерам', form: 'cad' },
+    ];
+  }
+  if (d.photos === 1) {
+    return [
+      { label: '🔥 Чертёж по фото', form: 'laser', photo: true },
+      { label: '🧊 3D-фигурка по фото', form: '3d', photo: true },
+    ];
+  }
+  return [
+    { label: '📷 Скан по фото', form: 'scan', main: true },
+    { label: '🔥 Чертёж по первому фото', form: 'laser', photo: true },
+    { label: '🧊 3D по первому фото', form: '3d', photo: true },
+  ];
+}
+
+function renderDraftCard() {
+  const d = chat.draft;
+  $('chat-draft').hidden = !d;
+  if (!d) {
+    chat.shownAt = null;
+    return;
+  }
+  if (chat.shownAt === d.at) return; // тот же черновик — не перерисовываем фото
+  chat.shownAt = d.at;
+
+  $('chat-draft-text').textContent = d.text;
+  $('chat-draft-text').hidden = !d.text;
+
+  const photos = $('chat-draft-photos');
+  photos.textContent = '';
+  for (let i = 0; i < d.photos; i++) {
+    const img = new Image();
+    img.alt = '';
+    img.decoding = 'async';
+    img.src = Api.chatDraftPhotoUrl(i);
+    photos.appendChild(img);
+  }
+  photos.hidden = d.photos === 0;
+
+  const box = $('chat-draft-actions');
+  box.textContent = '';
+  draftVariants(d).forEach((v) => {
+    const b = el('button', 'btn ' + (v.main ? 'btn-primary is-wide' : 'btn-secondary'), v.label);
+    b.type = 'button';
+    b.addEventListener('click', () => useDraft(v));
+    box.appendChild(b);
+  });
+}
+
+// Открыть обычный экран заказа, где уже всё заполнено из черновика.
+async function useDraft(v) {
+  const d = chat.draft;
+  if (!d) return;
+  const s = newOrderState(v.form, null);
+  s.fromDraft = d.at;
+  s.mode = v.photo ? 'photo' : 'text';
+  const text = d.text.slice(0, PROMPT_MAX);
+  if (v.form === '3d' && v.photo) s.extra = text; // у 3D по фото текст — «что поменять»
+  else s.prompt = text;
+  s.flexi = v.flexi === true;
+  const count = v.form === 'scan' ? d.photos : v.photo ? 1 : 0;
+  s.busyPhotos = count;
+  orderDrafts[draftKey(s)] = s;
+  openOrder(v.form);
+
+  // Фото — как будто человек выбрал их сам: скачали → то же сжатие → data URL.
+  let failed = 0;
+  for (let i = 0; i < count; i++) {
+    try {
+      s.photos.push(await compressPhoto(await Api.chatDraftPhoto(i)));
+    } catch (e) {
+      failed++;
+    }
+    s.busyPhotos--;
+    if (state.order === s) renderPhotos();
+  }
+  if (failed && state.order === s) {
+    hapticNotify('error');
+    toast(failed === count ? 'Фото из чата не загрузились — добавь их сам' : 'Не все фото из чата загрузились — добавь их ещё раз');
+  }
+}
+
+// Заказ создан (createJob ответил ok): форма больше не нужна, черновик — тоже.
+function orderCreated(s) {
+  delete orderDrafts[draftKey(s)];
+  if (s.fromDraft) markDraftUsed(s.fromDraft);
+}
+
 /* ---------- Экран заказа ---------- */
 
 function newOrderState(form, base) {
@@ -154,6 +287,7 @@ function newOrderState(form, base) {
     format: '',
     busyPhotos: 0,
     returnCad: null,
+    fromDraft: null, // at черновика из чата, если форма заполнена из него
   };
 }
 
@@ -178,11 +312,6 @@ function openOrder(form, opts) {
 
 function draftKey(s) {
   return s.form === 'edit' ? 'edit:' + (s.base && s.base.id) : s.form;
-}
-
-function dropOrderDraft(form) {
-  if (state.order && state.order.form === form) delete orderDrafts[draftKey(state.order)];
-  else delete orderDrafts[form];
 }
 
 function closeOrder() {
@@ -327,14 +456,13 @@ function renderPhotos() {
   $('photo-btns').hidden = !single && full;
 
   const min = FORMS[s.form].minPhotos || 0;
-  let hint = '';
-  if (!single) {
-    const n = s.photos.length;
-    hint = 'Фото: ' + n + ' из ' + max;
-    if (n < min) hint += ' · нужно ещё ' + (min - n);
-  }
-  $('photo-count').textContent = hint;
-  $('photo-count').hidden = !hint;
+  const n = s.photos.length;
+  $('photo-count').textContent = single ? '' : 'Фото: ' + n + ' из ' + max;
+  $('photo-count').hidden = single;
+  // скан: фото уже есть, но мало (например, 2 из чата)
+  const more = !single && !s.busyPhotos && n > 0 && n < min;
+  $('photo-more').textContent = more ? 'Добавь ещё фото — нужно хотя бы ' + min : '';
+  $('photo-more').hidden = !more;
 }
 
 function orderMainText() {
@@ -508,6 +636,12 @@ function bindCreate() {
   });
   $('order-extra').addEventListener('input', () => {
     if (state.order) state.order.extra = $('order-extra').value;
+  });
+
+  $('chat-draft-close').addEventListener('click', () => {
+    if (!chat.draft) return;
+    haptic();
+    markDraftUsed(chat.draft.at);
   });
 
   $('photo-pick').addEventListener('click', () => {

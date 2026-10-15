@@ -103,6 +103,25 @@ const Api = {
 
   flexi: (id) => api({ a: 'flexi', id }),
 
+  // Черновик из чата: бот больше не принимает заказы, а сохраняет текст и фото сюда.
+  // { draft: { text, photos, at, age_sec } } или { draft: null }.
+  chatDraft: () => api({ a: 'chatdraft' }),
+
+  chatDraftPhotoUrl: (i) => (MOCK ? mockDraftPhotoUrl(i) : apiUrl({ a: 'chatdraft', id: i })),
+
+  // Фото черновика как blob — дальше то же сжатие, что и у выбранных фото.
+  async chatDraftPhoto(i) {
+    const res = await fetchWithTimeout(Api.chatDraftPhotoUrl(i), 30000);
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || type.indexOf('json') !== -1) {
+      let data = null;
+      try { data = await res.json(); } catch (e) { /* не JSON */ }
+      if (isAuth(res.status, data)) throw new ApiError('auth');
+      throw new ApiError((data && data.error) || 'http_' + res.status, data);
+    }
+    return res.blob();
+  },
+
   // Файл или картинка с сервера: отдаёт Response, если пришёл файл, иначе бросает ApiError.
   async download(params, timeoutMs, signal) {
     const res = MOCK ? await mockDownload(params) : await fetchWithTimeout(apiUrl(params), timeoutMs, signal);
@@ -146,6 +165,13 @@ function mockState() {
     mockDb = {
       seq: 100,
       jobs: {},
+      // ?mockphotos=0|1|… — сколько фото в черновике из чата (по умолчанию 2)
+      chatdraft: {
+        text: 'Дракон сидит на скале, крылья раскрыты, хвост свисает вниз. Хочу на полку, примерно 15 см, чтобы было видно чешую на спине и шипы на хвосте',
+        photos: mockDraftPhotos(),
+        at: new Date(Date.now() - 40000).toISOString(),
+        age_sec: 40,
+      },
       me: {
         ok: true, balance: 7, free_left: 2, free_per_day: 3, free_3d: true, free_cad: true, models_left: 0,
         prices: { image: 1, model: 5, cad: 2, cad_edit: 1 },
@@ -160,6 +186,7 @@ function mockState() {
         ],
       },
     };
+    mockSave(); // сервер-понарошку живёт всю сессию: после перезагрузки тот же черновик и те же работы
   }
   return mockDb;
 }
@@ -175,6 +202,7 @@ async function mockGet(params) {
   await mockWait(250);
   const db = mockState();
   if (params.a === 'me') return mockCopy(db.me);
+  if (params.a === 'chatdraft') return { ok: true, draft: db.chatdraft ? mockCopy(db.chatdraft) : null };
   if (params.a === 'job') return mockStatus(params.id);
   if (params.a === 'send') return { ok: true };
   if (params.a === 'cad') {
@@ -299,6 +327,35 @@ function mockFileUrl(id) {
     + '<text x="256" y="262" font-size="110" text-anchor="middle">' + (MOCK_EMOJI[o.kind] || '🔥') + '</text>'
     + '<text x="256" y="450" font-size="40" font-family="sans-serif" text-anchor="middle" fill="#333">' + esc(o.title) + '</text></svg>';
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
+function mockDraftPhotos() {
+  const m = location.search.match(/[?&]mockphotos=(\d+)/);
+  return m ? Number(m[1]) : 2;
+}
+
+// Фото черновика — JPEG, нарисованный тут же: у каждого свой цвет.
+const mockDraftPhotoCache = {};
+function mockDraftPhotoUrl(i) {
+  if (!mockDraftPhotoCache[i]) {
+    const colors = ['#c9a27e', '#8fb3c9', '#a8c98f', '#c98fb3', '#c9c38f', '#8fc9c0'];
+    const c = document.createElement('canvas');
+    c.width = 900;
+    c.height = 1200;
+    const x = c.getContext('2d');
+    x.fillStyle = colors[i % colors.length];
+    x.fillRect(0, 0, 900, 1200);
+    x.fillStyle = '#3a3a3a';
+    x.beginPath();
+    x.ellipse(450, 640, 260 - i * 30, 320, 0, 0, Math.PI * 2);
+    x.fill();
+    x.fillStyle = '#ffffff';
+    x.font = 'bold 90px sans-serif';
+    x.textAlign = 'center';
+    x.fillText('фото ' + (i + 1), 450, 200);
+    mockDraftPhotoCache[i] = c.toDataURL('image/jpeg', 0.9);
+  }
+  return mockDraftPhotoCache[i];
 }
 
 // Кубик 40 мм в двоичном STL — чтобы «Покрутить в 3D» было что крутить.

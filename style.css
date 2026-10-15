@@ -1229,3 +1229,49 @@ body.has-mainbtn .toast { bottom: calc(var(--safe-bottom) + 76px); }
   box-shadow: 0 1px 4px rgba(0, 0, 0, .12);
 }
 body.has-backbtn #app { padding-top: 44px; }
+
+/* ---------- Черновик из чата ---------- */
+.chat-draft { margin-bottom: 18px; }
+.chat-draft-card {
+  padding: 12px 14px 14px 18px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+.chat-draft-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-draft-head b { font-size: 15px; }
+.chat-draft-close {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--hint);
+  font-size: 13px;
+  font-weight: 600;
+}
+.chat-draft-close:active { opacity: .7; }
+.chat-draft-text {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.35;
+  white-space: pre-line;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-draft-photos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chat-draft-photos img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; background: var(--bg); }
+.chat-draft .section-title { margin-top: 14px; }
+.chat-draft-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.chat-draft-actions .btn { min-height: 50px; padding: 6px 10px; font-size: 14px; line-height: 1.2; text-align: center; }
+.chat-draft-actions .is-wide { grid-column: 1 / -1; }
+.photo-more {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 193, 7, .16);
+  font-size: 13px;
+}

@@ -21,6 +21,7 @@ const state = {
   sending: false,
   buying: false,
   editorOpen: false,
+  createOpen: false, // видна вкладка «Создать» — при каждом открытии спрашиваем черновик из чата
   noSwipes: false,
   cad: null,        // открытый конструктор
   cadBusy: false,
@@ -180,6 +181,11 @@ function renderView() {
   if (editorOpen !== state.editorOpen) {
     state.editorOpen = editorOpen;
     if (editorOpen) renderEditor();
+  }
+  const createOpen = inApp && !overlay && state.tab === 'create';
+  if (createOpen !== state.createOpen) {
+    state.createOpen = createOpen;
+    if (createOpen) loadChatDraft();
   }
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
@@ -1046,16 +1052,20 @@ function start() {
 
   // Обычно открываемся на «✨ Создать». Ссылка с #editor (или startapp=editor) — сразу «Редактор»,
   // ?cad= и ?flexi= — конструктор и сборщик поверх «Моих работ».
+  // ?draft=1 — кнопка бота «🚀 Открыть и продолжить»: «Создать» с черновиком из чата.
   const path = location.hash.replace(/^#/, '').split(/[?&]/)[0];
   const cadId = cadIdFromUrl();
   const flexiId = flexiIdFromUrl();
-  if (path === 'editor' || tg.startParam === 'editor') state.tab = 'editor';
+  const fromChat = /[?&#]draft=1(&|$)/.test(location.search + location.hash);
+  if (fromChat) state.tab = 'create';
+  else if (path === 'editor' || tg.startParam === 'editor') state.tab = 'editor';
   else if (cadId || flexiId) state.tab = 'works';
 
   bindEvents();
-  loadMe(true);
-  jobsResume(state.tab === 'create');
+  loadMe(true); // покажет «Создать» — и сразу спросит черновик
+  jobsResume(state.tab === 'create' && !fromChat); // пришли с черновиком — не перекрываем его ожиданием
 
+  if (fromChat) return;
   if (flexiId) openFlexi(flexiId); // бот: кнопка «⛓ Сделать подвижной» → ?flexi=<id>
   else if (cadId) openCad(cadId); // бот: кнопка «📐 Открыть конструктор» → ?cad=<id>
 }
