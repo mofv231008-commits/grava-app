@@ -72,10 +72,10 @@ function renderEditor() {
     ed.what = edWhatForOrder(order);
     $('ed-work-name').textContent = order.title || 'Без названия';
     $('ed-work-note').textContent = isSketch(order)
-      ? 'После отправки эскиз придёт в Telegram — там выбери размер, и бот сделает 3D-модель'
+      ? 'После сохранения откроется новый эскиз — из него можно сделать 3D-модель'
       : ed.what === 'sketch'
-        ? 'Ты меняешь эскиз, из которого сделана модель. После отправки выбери размер в Telegram — бот сделает новую 3D-модель (по цене 3D-модели)'
-        : 'После отправки нажми в Telegram кнопку «Собрать DXF»';
+        ? 'Ты меняешь эскиз, из которого сделана модель. После сохранения откроется новый эскиз — из него можно сделать новую 3D-модель (по цене 3D-модели)'
+        : 'Изменённый чертёж сохранится в «Мои работы»';
   } else {
     if (avail.indexOf(ed.what) === -1) ed.what = avail[0];
     document.querySelectorAll('#ed-switch button').forEach((b) => {
@@ -84,8 +84,8 @@ function renderEditor() {
     });
     $('ed-switch').classList.toggle('is-single', avail.length === 1);
     $('ed-hint').textContent = ed.what === 'sketch'
-      ? 'После отправки выбери в Telegram размер — и бот сделает 3D-модель'
-      : 'После отправки нажми в Telegram кнопку «Собрать DXF»';
+      ? 'После сохранения откроется новый эскиз — из него можно сделать 3D-модель'
+      : 'Изменённый чертёж сохранится в «Мои работы»';
   }
 
   $('ed-price').textContent = jobPrice('sketch_edit') || credits(1);
@@ -711,13 +711,16 @@ async function edSend(kind) {
   }
 
   const params = { a: kind, what: ed.what, image };
-  if (ed.order) params.title = ed.order.title || ''; // бот подпишет правку названием работы
+  if (ed.order) params.title = ed.order.title || ''; // название новой работы — как у исходной
+  // проект: у правки работы — её проект, иначе — открытый на «Создать»
+  const project = ed.order && ed.order.project ? String(ed.order.project) : realProject(proj.current);
+  if (project) params.project = project;
   if (kind === 'ai') {
     params.prompt = prompt;
     if (marked) params.marked = 'true';
   }
 
-  edBusy(true, kind === 'ai' ? 'Вношу изменения… около 30 секунд' : 'Отправляю…');
+  edBusy(true, kind === 'ai' ? 'Вношу изменения… около 30 секунд' : 'Сохраняю…');
   const r = await Api.edit(params, ED_SEND_TIMEOUT);
   const data = r.data;
   edBusy(false);
@@ -730,13 +733,38 @@ async function edSend(kind) {
       renderBalance();
     }
     hapticNotify('success');
-    alertBox('Готово! Результат отправлен в Telegram', () => tg.close());
+    edSaved(data.id, params);
   } else if (data && data.error === 'no_credits') {
     edNoCredits();
   } else {
     hapticNotify('error');
     alertBox('Не вышло, попробуй ещё раз — кредиты не списались.');
   }
+}
+
+// Сохранено. id — номер нового эскиза в «Моих работах»: закрываем редактор и открываем его —
+// с теми же кнопками следующего шага, что у любого эскиза. У правки чертежа id нет (null).
+async function edSaved(id, params) {
+  const from = ed.order;
+  ed.history = [];
+  $('ed-prompt').value = '';
+  if (id == null) {
+    edUpdateButtons();
+    alertBox('Сохранено в «Мои работы»');
+    loadMe(false);
+    return;
+  }
+  ed.order = null;    // в следующий раз — снова последний эскиз
+  ed.loadedKey = null;
+  const o = await savedOrder(String(id), {
+    kind: 'sketch', sketch: true, mode: from && isFlexiMode(from) ? '3d_flexi' : '3d',
+    '3d_flexi': !!(from && isFlexiMode(from)), title: params.title || 'Эскиз', project: params.project || '',
+    has_preview: true, has_file: false, editable: true,
+  });
+  if (!o) return;
+  projOpen(orderProject(o)); // за карточкой — лента проекта этого эскиза
+  setTab('create');
+  openDetail(o, { fresh: true });
 }
 
 function edNoCredits() {

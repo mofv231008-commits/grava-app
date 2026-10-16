@@ -259,6 +259,7 @@ function openCad(id) {
 
   $('cad-missing').hidden = true;
   $('cad-main').hidden = false;
+  $('cad-saved').hidden = true;
   $('cad-title').textContent = 'Загружаю деталь…';
   $('cad-format').hidden = true;
   $('cad-params').textContent = '';
@@ -942,7 +943,7 @@ async function cadSnapshotSvg() {
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
-/* ---------- Кнопка «Отправить в Telegram» ---------- */
+/* ---------- Кнопка «Сохранить»: файл детали — новой работой в «Мои работы» ---------- */
 
 function cadUpdateMainButton() {
   const c = state.cad;
@@ -953,7 +954,7 @@ function cadUpdateMainButton() {
   }
   const ready = c.status === 'ok' && !c.pending;
   tg.MainButton.setParams(Object.assign({
-    text: c.format === 'dxf' ? 'Отправить DXF в Telegram' : 'Отправить STL в Telegram',
+    text: c.format === 'dxf' ? 'Сохранить DXF' : 'Сохранить STL',
     is_visible: true,
     is_active: ready,
   }, mainButtonColors(ready)));
@@ -1020,12 +1021,12 @@ async function cadExport() {
   if (bytes.byteLength > CAD_MAX_FILE) {
     cadBusy(false);
     hapticNotify('error');
-    alertBox('Деталь слишком подробная для отправки');
+    alertBox('Деталь слишком подробная — файл получается слишком большим');
     return;
   }
 
   const file = await cadBlobToDataUrl(bytes);
-  cadBusy(true, 'Отправляю в Telegram…');
+  cadBusy(true, 'Сохраняю…');
   const r = await cadPost({ a: 'export', id: c.id, file, snapshot, scad: c.last.code }, CAD_EXPORT_TIMEOUT);
   cadBusy(false);
 
@@ -1033,8 +1034,19 @@ async function cadExport() {
     sessionExpired();
   } else if (r.data && r.data.ok === true) {
     hapticNotify('success');
-    alertBox('Готово! Файл отправлен в Telegram');
     loadMe(false); // в «Моих работах» появилась новая работа
+    // { ok, id } — номер новой работы; сервер кладёт её в проект исходной детали
+    if (state.cad === c && r.data.id != null) {
+      const base = findOrder(c.id);
+      const dxf = c.format === 'dxf';
+      showSavedWork($('cad-saved'), String(r.data.id), {
+        kind: dxf ? 'laser' : 'model', mode: dxf ? 'laser' : '3d', format: dxf ? null : 'stl', cad: true,
+        title: c.data.title || (base && base.title) || 'Деталь', project: (base && base.project) || '',
+        has_file: true, has_preview: true,
+      });
+    } else if (state.cad === c) {
+      toast('Сохранено в «Мои работы»');
+    }
   } else {
     hapticNotify('error');
     alertBox('Не вышло, попробуй ещё раз');
@@ -1077,6 +1089,7 @@ async function cadFix() {
 /* ---------- Кнопки ---------- */
 
 function bindCad() {
+  bindSavedWork($('cad-saved'), closeCad);
   $('cad-reset').addEventListener('click', cadResetParams);
   $('cad-fix').addEventListener('click', cadFix);
   $('cad-ask').addEventListener('click', cadAsk);

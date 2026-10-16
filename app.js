@@ -9,7 +9,7 @@ const state = {
   me: null,
   tab: 'create',
   detail: null,     // открытая работа
-  detailFresh: false, // работа только что готова — файл уже в чате
+  detailFresh: false, // работа только что готова — показываем «Сохранено в «Мои работы»»
   detailFormat: 'stl', // формат будущей модели для эскиза
   order: null,      // открытый экран заказа (create.js)
   wait: null,       // id заказа на экране ожидания (jobs.js)
@@ -89,6 +89,7 @@ function fileFormat(o) { return isModel(o) ? String(o.format || 'stl').toUpperCa
 function isStl(o) { return isModel(o) && fileFormat(o) === 'STL'; }
 function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', laser: 'laser' }[kindOf(o)]; }
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
+function canSend(o) { return isSketch(o) || hasFile(o); } // эскиз бот присылает картинкой, остальное — файлом
 
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
@@ -477,7 +478,9 @@ function renderDetail() {
   $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true;
   setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
-  $('detail-sent').hidden = !(state.detailFresh && hasFile(o));
+  $('detail-sent').hidden = !state.detailFresh;
+  // у эскиза главная кнопка — «Сделать 3D-модель», «Отправить в Telegram» — рядом, вторичной
+  $('detail-send').hidden = k !== 'sketch' || !canSend(o);
   $('detail-note').textContent = {
     sketch: isFlexiMode(o)
       ? 'Это эскиз фигурки на шарнирах. Если нравится — сделай из него 3D-модель, а потом нажми «Сделать подвижной (на шарнирах)». Если нет — измени описанием или попроси ещё вариант.'
@@ -486,7 +489,7 @@ function renderDetail() {
     laser: 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.',
     model: isStl(o)
       ? 'Файл STL открой в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura) — и можно печатать.'
-      : 'Файл 3MF здесь не показывается — отправь его в Telegram и открой в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura).',
+      : 'Файл 3MF здесь не показывается. Нажми «Отправить в Telegram» и открой его в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura).',
   }[k];
 }
 
@@ -496,7 +499,7 @@ function detailMainText(o) {
   const k = kindOf(o);
   if (k === 'sketch') return withPrice('Сделать 3D-модель', 'model');
   if (k === 'cad') return 'Открыть конструктор';
-  return hasFile(o) ? 'Отправить в Telegram' : '';
+  return canSend(o) ? 'Отправить в Telegram' : '';
 }
 
 function onDetailMain() {
@@ -505,7 +508,7 @@ function onDetailMain() {
   const k = kindOf(o);
   if (k === 'sketch') makeModel(o, state.detailFormat, true);
   else if (k === 'cad') openCad(o.id);
-  else sendToChat();
+  else if (canSend(o)) sendWork(o.id);
 }
 
 // Эскиз → модель или «Сделать модель заново» из модели. flexi — если фигурка подвижная.
@@ -559,6 +562,9 @@ function detailResize(mm) {
 
 function bindDetail() {
   $('detail-3d').addEventListener('click', openViewer);
+  $('detail-send').addEventListener('click', () => {
+    if (state.detail) sendWork(state.detail.id, $('detail-send'));
+  });
   $('detail-cad').addEventListener('click', () => {
     if (state.detail) openCad(state.detail.id);
   });
@@ -626,22 +632,75 @@ function bindDetail() {
   });
 }
 
-async function sendToChat() {
-  const o = state.detail;
-  if (!o || state.sending || !hasFile(o)) return;
+// «Отправить в Telegram» (?a=send): бот присылает работу в чат — эскиз картинкой, остальное файлом.
+// Сам бот больше ничего не пишет, пока человек в приложении, — только по этой кнопке.
+// btn — кнопка на экране (на время отправки неактивна), без неё — крутим MainButton.
+async function sendWork(id, btn) {
+  if (state.sending || id == null) return;
   haptic();
   state.sending = true;
-  tg.MainButton.showProgress(false);
+  const label = btn ? (btn.querySelector('span') || btn).textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    setLabel(btn, 'Отправляю…');
+  } else {
+    tg.MainButton.showProgress(false);
+  }
   try {
-    await Api.send(o.id);
+    await Api.send(id);
     hapticNotify('success');
-    toast('Отправлено в Telegram');
+    toast('Отправлено в Telegram ✓');
   } catch (err) {
-    handleActionError(err, 'Не получилось отправить файл');
+    if (err && err.code === 'auth') {
+      sessionExpired();
+    } else {
+      hapticNotify('error');
+      toast('Не получилось отправить, попробуй ещё раз');
+    }
   } finally {
     state.sending = false;
-    tg.MainButton.hideProgress();
+    if (btn) {
+      btn.disabled = false;
+      setLabel(btn, label);
+    } else {
+      tg.MainButton.hideProgress();
+    }
   }
+}
+
+// Конструктор и сборщик шарниров сохранили новую работу: карточка «Сохранено в «Мои работы»»
+// с кнопками «Открыть работу» и «Отправить в Telegram». fallback — работа, если ?a=me её ещё не знает.
+function showSavedWork(box, id, fallback) {
+  box.hidden = false;
+  box.dataset.id = id;
+  box.savedFallback = fallback;
+  setTimeout(() => box.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+}
+
+// Работа, которую только что сохранили: ищем в ?a=me (если нет — перезапрашиваем), иначе — fallback.
+async function savedOrder(id, fallback) {
+  let o = findOrder(id);
+  if (!o) {
+    await loadMe(false);
+    o = findOrder(id);
+  }
+  if (!o && fallback && state.me) {
+    o = Object.assign({ date: new Date().toISOString() }, fallback, { id });
+    state.me.orders = [o].concat(state.me.orders || []);
+  }
+  return o;
+}
+
+function bindSavedWork(box, close) {
+  box.querySelector('[data-act="open"]').addEventListener('click', async () => {
+    haptic();
+    const o = await savedOrder(box.dataset.id, box.savedFallback);
+    if (!o) return;
+    close();
+    openDetail(o);
+  });
+  const send = box.querySelector('[data-act="send"]');
+  send.addEventListener('click', () => sendWork(box.dataset.id, send));
 }
 
 /* ---------- Баланс ---------- */

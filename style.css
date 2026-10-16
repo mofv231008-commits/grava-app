@@ -1035,6 +1035,20 @@ button {
 }
 .resize-input:focus { border-color: var(--text-2); }
 
+/* «Сохранено в «Мои работы»» — после «Сохранить» в конструкторе и сборщике шарниров */
+.saved {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.saved-title { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; font-family: var(--serif); font-size: 17px; font-weight: 600; line-height: 1.3; }
+.saved-title .i { width: 20px; height: 20px; color: var(--success); stroke-width: 2.2; }
+
 /* ---------- Баланс ---------- */
 .hero {
   padding: 24px 20px;

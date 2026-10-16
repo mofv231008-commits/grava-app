@@ -70,6 +70,7 @@ function openFlexi(id) {
   $('flexi-status-text').textContent = 'Загружаю модель…';
   $('flexi-editor').hidden = true;
   $('flexi-result').hidden = true;
+  $('flexi-saved').hidden = true;
   flexiRenderSettings();
   renderView();
   window.scrollTo(0, 0);
@@ -1087,7 +1088,7 @@ function flexiSnapshot() {
   return url;
 }
 
-/* ---------- Отправить в Telegram ---------- */
+/* ---------- Сохранить STL: подвижная модель — новой работой в «Мои работы» ---------- */
 
 function flexiReady(f) {
   return !!(f && f.built && !f.stale && !f.built.errors.length && f.built.joints.length);
@@ -1102,7 +1103,7 @@ function flexiUpdateMainButton() {
   }
   const ready = flexiReady(f);
   tg.MainButton.setParams(Object.assign({
-    text: 'Отправить STL в Telegram',
+    text: 'Сохранить STL',
     is_visible: true,
     is_active: ready,
   }, mainButtonColors(ready)));
@@ -1120,19 +1121,19 @@ async function flexiExport() {
   const bytes = f.built.stl;
   if (bytes.byteLength > FLEXI_MAX_FILE) {
     hapticNotify('error');
-    alertBox('Модель слишком подробная для отправки (файл больше 12 МБ)');
+    alertBox('Модель слишком подробная — файл больше 12 МБ');
     return;
   }
   state.flexiBusy = true;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Отправляю в Telegram…';
+  $('busy-text').textContent = 'Сохраняю…';
   let r;
   try {
     let snapshot = '';
     try { snapshot = flexiSnapshot(); } catch (e) { /* без снимка */ }
     r = await cadPost({
       a: 'flexi', id: f.id, file: await cadBlobToDataUrl(bytes), snapshot,
-      caption: 'Не меняй размер в программе для печати — шарниры рассчитаны на этот размер', // текст к STL в чате
+      caption: 'Не меняй размер в программе для печати — шарниры рассчитаны на этот размер', // подпись к файлу, если его отправят в Telegram
     }, 120000);
   } catch (e) {
     r = { status: 0, data: null };
@@ -1143,8 +1144,18 @@ async function flexiExport() {
     sessionExpired();
   } else if (r.data && r.data.ok === true) {
     hapticNotify('success');
-    alertBox('Готово! Файл отправлен в Telegram');
     loadMe(false);
+    // { ok, id } — номер новой работы; сервер кладёт её в проект исходной модели
+    if (state.flexi === f && r.data.id != null) {
+      const base = findOrder(f.id);
+      showSavedWork($('flexi-saved'), String(r.data.id), {
+        kind: 'model', mode: '3d', format: 'stl', jointed: true, size_mm: Math.round(f.length),
+        title: (f.data && f.data.title) || (base && base.title) || 'Фигурка', project: (base && base.project) || '',
+        has_file: true, has_preview: true,
+      });
+    } else if (state.flexi === f) {
+      toast('Сохранено в «Мои работы»');
+    }
   } else {
     hapticNotify('error');
     alertBox('Не вышло, попробуй ещё раз');
@@ -1154,6 +1165,7 @@ async function flexiExport() {
 /* ---------- Кнопки ---------- */
 
 function bindFlexi() {
+  bindSavedWork($('flexi-saved'), closeFlexi);
   const canvas = $('flexi-canvas');
   canvas.addEventListener('pointerdown', flexiPointerDown);
   canvas.addEventListener('pointermove', flexiPointerMove);

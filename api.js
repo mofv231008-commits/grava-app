@@ -235,8 +235,34 @@ async function mockGet(params) {
   throw new ApiError(params.a === 'buy' ? 'mock' : 'not_found');
 }
 
-async function mockPost() {
+// Редактор, конструктор и сборщик шарниров: «сохранить» создаёт новую работу и отдаёт её номер,
+// как настоящий сервер. Новая работа — в проекте исходной (у редактора — в переданном project).
+async function mockPost(url, params) {
   await mockWait(400);
+  const p = params || {};
+  const db = mockState();
+  const now = new Date().toISOString();
+  const add = (o) => {
+    o.id = 'o' + (++db.seq);
+    db.me.orders.unshift(Object.assign({ date: now, has_preview: true }, o));
+    mockSave();
+    return o.id;
+  };
+  if (url === EDIT_API && (p.a === 'save' || p.a === 'ai')) {
+    if (p.a === 'ai' && !mockCharge(db.me, 'sketch_edit')) return { status: 200, data: { ok: false, error: 'no_credits' } };
+    if (p.what !== 'sketch') return { status: 200, data: { ok: true, id: null, balance: db.me.balance } }; // правка чертежа
+    const id = add({ kind: 'sketch', sketch: true, mode: '3d', title: p.title || 'Эскиз', has_file: false, editable: true, project: p.project || '', prompt: p.prompt || '' });
+    return { status: 200, data: { ok: true, id, balance: db.me.balance } };
+  }
+  if (url === CAD_API && (p.a === 'export' || p.a === 'flexi')) {
+    const base = db.me.orders.find((x) => x.id === String(p.id)) || { title: 'Деталь', project: '' };
+    let dxf = false;
+    try { dxf = p.a === 'export' && atob(String(p.file).split(',')[1].slice(0, 80)).indexOf('SECTION') !== -1; } catch (e) { /* STL */ }
+    const id = p.a === 'flexi'
+      ? add({ kind: 'model', mode: '3d', format: 'stl', jointed: true, size_mm: 150, title: base.title, has_file: true, editable: false, project: base.project || '' })
+      : add({ kind: dxf ? 'laser' : 'model', mode: dxf ? 'laser' : '3d', format: dxf ? undefined : 'stl', cad: true, size_mm: 80, title: base.title, has_file: true, editable: false, project: base.project || '' });
+    return { status: 200, data: { ok: true, id } };
+  }
   return { status: 200, data: { ok: true } };
 }
 

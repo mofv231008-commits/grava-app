@@ -158,8 +158,9 @@ function renderCreate() {
 }
 
 /* ---------- Черновик из чата → композер ---------- */
-/* Бот больше не принимает заказы: текст и фото из чата он сохраняет черновиком
-   и присылает кнопку «🚀 Открыть и продолжить» (?draft=1). */
+/* Бот не принимает заказы: текст и фото, которые человек написал боту, он сохраняет черновиком
+   и присылает кнопку «🚀 Открыть и продолжить» (?draft=1). Сам бот, пока человек в приложении,
+   ничего не пишет: статусы и результаты — только здесь, в чат — по кнопке «Отправить в Telegram». */
 
 function draftUsedAt() {
   try { return localStorage.getItem(DRAFT_USED_KEY) || ''; } catch (e) { return ''; }
@@ -211,7 +212,7 @@ async function loadChatDraft() {
   }
   if (failed && comp.fromDraft === at) {
     hapticNotify('error');
-    toast(failed === photos ? 'Фото из Telegram не загрузились — загрузи их ещё раз' : 'Не все фото из Telegram загрузились — загрузи их ещё раз');
+    toast(failed === photos ? 'Фото из сообщения не загрузились — загрузи их ещё раз' : 'Не все фото из сообщения загрузились — загрузи их ещё раз');
   }
 }
 
@@ -294,7 +295,7 @@ function renderComposer() {
     tags.appendChild(composerTag('pencil', 'Правка: ' + (comp.edit.title || 'Без названия'), composerExitEdit, 'Выйти из правки'));
   }
   if (comp.fromDraft) {
-    tags.appendChild(composerTag('message', 'Из сообщения в Telegram', composerDropDraft, 'Убрать текст и фото из сообщения'));
+    tags.appendChild(composerTag('message', 'Из сообщения боту', composerDropDraft, 'Убрать текст и фото из сообщения'));
   }
 
   const box = $('composer-photos');
@@ -409,7 +410,7 @@ function composerExitEdit() {
   renderComposer();
 }
 
-// «Из сообщения в Telegram ×» — не надо: убираем подставленное и больше не предлагаем.
+// «Из сообщения боту ×» — не надо: убираем подставленное и больше не предлагаем.
 function composerDropDraft() {
   const at = comp.fromDraft;
   if (!at) return;
