@@ -1,5 +1,5 @@
-/* Грава — вкладка «✨ Создать»: черновик из чата, плитки, «Продолжить»
-   и экраны заказа (лазер, 3D, деталь, скан, правка словами).
+/* Грава — вкладка «Создать»: лента работ, как переписка, и композер внизу — создать работу,
+   как написать сообщение. Плюс экраны заказа (правка словами с экрана работы, «Изменить запрос»).
    Использует помощники из app.js и jobs.js. */
 'use strict';
 
@@ -7,11 +7,14 @@ const PHOTO_MAX_SIDE = 1600;
 const PHOTO_MAX_BYTES = 7 * 1024 * 1024;
 const PROMPT_MAX = 1500;
 const DRAFT_USED_KEY = 'grava.draftUsed';
-const DRAFT_MAX_PHOTOS = 6;
+const LAST_MODE_KEY = 'grava.lastMode';
+const MAX_PHOTOS = 6;
+const FEED_SIZE = 10;
+const COMPOSER_MAX_H = 6 * 24 + 16; // 6 строк
 
 const FORMS = {
   laser: {
-    title: '🔥 Чертёж для лазера',
+    title: 'Чертёж для лазера',
     modes: true,
     label: 'Что вырезать или выжечь?',
     placeholder: 'например: олень в лесу, тонкие линии',
@@ -21,7 +24,7 @@ const FORMS = {
     kind: (s) => (s.mode === 'photo' ? 'laser_photo' : 'laser_new'),
   },
   '3d': {
-    title: '🧊 3D-фигурка',
+    title: '3D-фигурка',
     modes: true,
     label: 'Что слепить?',
     placeholder: 'например: дракон сидит, крылья сложены',
@@ -32,7 +35,7 @@ const FORMS = {
     kind: (s) => (s.mode === 'photo' ? 'sketch_photo' : 'sketch'),
   },
   cad: {
-    title: '📐 Деталь по размерам',
+    title: 'Деталь по размерам',
     label: 'Опиши деталь с размерами в мм',
     placeholder: 'например: пластина 50×30×3, два отверстия 5 мм по краям',
     chips: ['Пластина 50×30×3, два отверстия 5 мм по краям'],
@@ -42,7 +45,7 @@ const FORMS = {
     kind: () => 'cad',
   },
   scan: {
-    title: '📷 Скан по фото',
+    title: 'Скан по фото',
     lead: 'Сними предмет со всех сторон: спереди, сбоку, сзади, с другого бока. Однотонный фон, хороший свет, предмет целиком в кадре, без рук',
     photos: 6,
     minPhotos: 3,
@@ -51,7 +54,7 @@ const FORMS = {
     kind: () => 'scan',
   },
   edit: {
-    title: '✏️ Поправить словами',
+    title: 'Поправить словами',
     label: 'Что поменять?',
     button: 'Поправить',
     kind: (s) => editKind(s.base),
@@ -64,8 +67,37 @@ const EDIT_PLACEHOLDERS = {
   cad_edit: 'например: добавь паз 10×3 посередине',
 };
 
+// Режимы композера: иконка и подсказка в поле ввода.
+const MODES = {
+  laser: { icon: 'laser', name: 'Лазер', placeholder: 'Что вырезать или выжечь? Или прикрепи фото' },
+  '3d': { icon: 'cube', name: '3D', placeholder: 'Какую фигурку слепить? Или прикрепи фото' },
+  flexi: { icon: 'joint', name: 'Подвижная', placeholder: 'Какое животное на шарнирах? Ящерица, дракон, осьминог…' },
+  cad: { icon: 'ruler', name: 'Деталь', placeholder: 'Опиши деталь с размерами в мм' },
+  scan: { icon: 'scan', name: 'Скан', placeholder: 'Прикрепи 3–6 фото предмета со всех сторон' },
+};
+
+// Пустая лента — примеры: тап подставляет текст и режим.
+const EXAMPLES = [
+  { text: 'Волк воет на луну', mode: 'laser', note: 'для лазера' },
+  { text: 'Ящерица на шарнирах', mode: 'flexi', note: 'подвижная фигурка' },
+  { text: 'Держатель для телефона 75 мм', mode: 'cad', note: 'деталь по размерам' },
+  { text: 'Котик спит клубком', mode: '3d', note: '3D-фигурка' },
+];
+
 const orderDrafts = {}; // недописанные формы — вернулся назад и снова зашёл, текст на месте
-const chat = { draft: null, seq: 0, shownAt: null }; // черновик из чата
+const chat = { seq: 0 }; // запросы черновика из чата
+
+const comp = {
+  mode: lastMode(),
+  manual: false,       // режим выбрали руками — по числу фото больше не угадываем
+  photos: [],          // data URL, уже сжатые
+  busyPhotos: 0,
+  edit: null,          // работа, которую правим словами («Правка: Котик»)
+  fromDraft: null,     // at черновика из чата, если композер заполнен из него
+  format: '',          // деталь: stl | dxf | '' (сам реши)
+  photoMode: 'redraw', // лазер по фото: перерисовать или обвести
+  sending: false,
+};
 
 function editKind(o) {
   if (!o) return 'laser_edit';
@@ -82,68 +114,52 @@ function shortTitle(text) {
   return (sp > 20 ? cut.slice(0, sp) : cut) + '…';
 }
 
+function lastMode() {
+  try {
+    const m = localStorage.getItem(LAST_MODE_KEY);
+    if (m && m !== 'scan' && MODES[m]) return m;
+  } catch (e) { /* приватный режим */ }
+  return 'laser';
+}
+
+function saveLastMode(m) {
+  if (m === 'scan') return; // скан выбирается по фото
+  try { localStorage.setItem(LAST_MODE_KEY, m); } catch (e) { /* ок */ }
+}
+
+// Цена у кнопки отправки и на кнопках ленты — коротко.
+function shortPrice(kind) {
+  const p = jobPrice(kind);
+  if (p === '🎁 бесплатно') return '🎁';
+  if (p === 'из оплаченных') return 'оплачено';
+  return p;
+}
+
 /* ---------- Вкладка «Создать» ---------- */
 
-function tilePrices() {
-  const me = state.me || {};
-  const p = me.prices || {};
-  const free = Number(me.free_left) || 0;
-  const modelsLeft = Number(me.models_left) || 0;
-
-  const laser = [];
-  if (p.image != null) laser.push(credits(p.image));
-  if (free > 0) laser.push('сегодня бесплатно ещё ' + free);
-
-  let fig = '';
-  if (me.free_3d === true) fig = '🎁 первая модель в подарок';
-  else if (p.image != null && (p.model != null || modelsLeft > 0)) {
-    fig = 'эскиз ' + credits(p.image) + ', модель ' + (modelsLeft > 0 ? 'из оплаченных' : credits(p.model));
-  }
-
-  let cad = '';
-  if (me.free_cad === true) cad = '🎁 первая в подарок';
-  else if (p.cad != null) cad = credits(p.cad);
-
-  const scanPrice = jobPrice('scan');
-  return {
-    laser: laser.join(' · '),
-    '3d': fig,
-    cad,
-    scan: 'как 3D-модель' + (scanPrice ? ' · ' + scanPrice.replace('🎁 бесплатно', '🎁 в подарок') : ''),
-  };
-}
-
 function renderCreate() {
-  const prices = tilePrices();
-  document.querySelectorAll('.tile').forEach((t) => {
-    t.querySelector('.tile-price').textContent = state.me ? prices[t.dataset.form] || '' : '';
-  });
-
-  const orders = ((state.me && state.me.orders) || []).slice(0, 3);
-  const key = JSON.stringify(orders);
-  if (key !== renderCreate.key) {
-    renderCreate.key = key;
-    const row = $('continue-row');
-    row.textContent = '';
-    orders.forEach((o) => {
-      const card = el('button', 'mini');
-      card.type = 'button';
-      const thumb = el('div', 'thumb');
-      fillPreview(thumb, o);
-      card.appendChild(thumb);
-      card.appendChild(el('span', 'mini-title', o.title || 'Без названия'));
-      card.addEventListener('click', () => {
-        haptic();
-        openDetail(o);
-      });
-      row.appendChild(card);
+  const me = state.me;
+  const name = tg.userName || (me && me.user && me.user.first_name) || '';
+  $('hello-title').textContent = name ? 'Что сделаем, ' + name + '?' : 'Что сделаем?';
+  const sub = $('hello-sub');
+  sub.textContent = '';
+  if (me) {
+    if (me.free_per_day != null) {
+      sub.appendChild(document.createTextNode('Бесплатных картинок сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0) + ' · '));
+    }
+    const bal = el('button', '', 'Баланс: ' + formatNumber(Number(me.balance) || 0) + ' кр.');
+    bal.type = 'button';
+    bal.addEventListener('click', () => {
+      haptic();
+      setTab('balance');
     });
-    $('continue').hidden = orders.length === 0;
+    sub.appendChild(bal);
   }
-  renderJobsBar();
+  renderFeed();
+  renderComposer();
 }
 
-/* ---------- Черновик из чата ---------- */
+/* ---------- Черновик из чата → композер ---------- */
 /* Бот больше не принимает заказы: текст и фото из чата он сохраняет черновиком
    и присылает кнопку «🚀 Открыть и продолжить» (?draft=1). */
 
@@ -151,11 +167,11 @@ function draftUsedAt() {
   try { return localStorage.getItem(DRAFT_USED_KEY) || ''; } catch (e) { return ''; }
 }
 
-// Черновик использован или отклонён — карточка с ним больше не появится.
+// Черновик использован или отклонён — больше не подставляем.
 function markDraftUsed(at) {
   try { localStorage.setItem(DRAFT_USED_KEY, at); } catch (e) { /* приватный режим */ }
-  if (chat.draft && chat.draft.at === at) chat.draft = null;
-  renderDraftCard();
+  if (comp.fromDraft === at) comp.fromDraft = null;
+  renderComposer();
 }
 
 // Спрашиваем при старте и при каждом открытии «Создать». Нет черновика или ошибка — молча ничего.
@@ -167,102 +183,36 @@ async function loadChatDraft() {
   } catch (e) {
     return;
   }
-  if (seq !== chat.seq) return;
-  const photos = Math.min(DRAFT_MAX_PHOTOS, Number(d && d.photos) || 0);
-  const text = String((d && d.text) || '').trim();
-  chat.draft = d && d.at && d.at !== draftUsedAt() && (text || photos)
-    ? { text, photos, at: String(d.at) }
-    : null;
-  renderDraftCard();
-}
+  if (seq !== chat.seq || !d || !d.at) return;
+  const at = String(d.at);
+  const text = String(d.text || '').trim().slice(0, PROMPT_MAX);
+  const photos = Math.min(MAX_PHOTOS, Number(d.photos) || 0);
+  if (at === draftUsedAt() || at === comp.fromDraft || (!text && !photos)) return;
+  // человек уже что-то пишет — не затираем, подставим в следующий раз
+  if ($('composer-input').value.trim() || comp.photos.length || comp.busyPhotos || comp.edit) return;
 
-// Что можно сделать из черновика — зависит от числа фото.
-function draftVariants(d) {
-  if (d.photos === 0) {
-    return [
-      { label: '🔥 Чертёж для лазера', form: 'laser' },
-      { label: '🧊 3D-фигурка', form: '3d' },
-      { label: '🦎 Подвижная фигурка', form: '3d', flexi: true },
-      { label: '📐 Деталь по размерам', form: 'cad' },
-    ];
-  }
-  if (d.photos === 1) {
-    return [
-      { label: '🔥 Чертёж по фото', form: 'laser', photo: true },
-      { label: '🧊 3D-фигурка по фото', form: '3d', photo: true },
-    ];
-  }
-  return [
-    { label: '📷 Скан по фото', form: 'scan', main: true },
-    { label: '🔥 Чертёж по первому фото', form: 'laser', photo: true },
-    { label: '🧊 3D по первому фото', form: '3d', photo: true },
-  ];
-}
-
-function renderDraftCard() {
-  const d = chat.draft;
-  $('chat-draft').hidden = !d;
-  if (!d) {
-    chat.shownAt = null;
-    return;
-  }
-  if (chat.shownAt === d.at) return; // тот же черновик — не перерисовываем фото
-  chat.shownAt = d.at;
-
-  $('chat-draft-text').textContent = d.text;
-  $('chat-draft-text').hidden = !d.text;
-
-  const photos = $('chat-draft-photos');
-  photos.textContent = '';
-  for (let i = 0; i < d.photos; i++) {
-    const img = new Image();
-    img.alt = '';
-    img.decoding = 'async';
-    img.src = Api.chatDraftPhotoUrl(i);
-    photos.appendChild(img);
-  }
-  photos.hidden = d.photos === 0;
-
-  const box = $('chat-draft-actions');
-  box.textContent = '';
-  draftVariants(d).forEach((v) => {
-    const b = el('button', 'btn ' + (v.main ? 'btn-primary is-wide' : 'btn-secondary'), v.label);
-    b.type = 'button';
-    b.addEventListener('click', () => useDraft(v));
-    box.appendChild(b);
-  });
-}
-
-// Открыть обычный экран заказа, где уже всё заполнено из черновика.
-async function useDraft(v) {
-  const d = chat.draft;
-  if (!d) return;
-  const s = newOrderState(v.form, null);
-  s.fromDraft = d.at;
-  s.mode = v.photo ? 'photo' : 'text';
-  const text = d.text.slice(0, PROMPT_MAX);
-  if (v.form === '3d' && v.photo) s.extra = text; // у 3D по фото текст — «что поменять»
-  else s.prompt = text;
-  s.flexi = v.flexi === true;
-  const count = v.form === 'scan' ? d.photos : v.photo ? 1 : 0;
-  s.busyPhotos = count;
-  orderDrafts[draftKey(s)] = s;
-  openOrder(v.form);
+  comp.fromDraft = at;
+  $('composer-input').value = text;
+  comp.manual = false;
+  comp.mode = photos >= 2 ? 'scan' : photos === 1 ? '3d' : lastMode();
+  comp.busyPhotos = photos;
+  renderComposer();
 
   // Фото — как будто человек выбрал их сам: скачали → то же сжатие → data URL.
   let failed = 0;
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < photos; i++) {
     try {
-      s.photos.push(await compressPhoto(await Api.chatDraftPhoto(i)));
+      const url = await compressPhoto(await Api.chatDraftPhoto(i));
+      if (comp.fromDraft === at) comp.photos.push(url);
     } catch (e) {
       failed++;
     }
-    s.busyPhotos--;
-    if (state.order === s) renderPhotos();
+    comp.busyPhotos = Math.max(0, comp.busyPhotos - 1);
+    renderComposer();
   }
-  if (failed && state.order === s) {
+  if (failed && comp.fromDraft === at) {
     hapticNotify('error');
-    toast(failed === count ? 'Фото из чата не загрузились — добавь их сам' : 'Не все фото из чата загрузились — добавь их ещё раз');
+    toast(failed === photos ? 'Фото из чата не загрузились — прикрепи их сам' : 'Не все фото из чата загрузились — прикрепи их ещё раз');
   }
 }
 
@@ -270,6 +220,579 @@ async function useDraft(v) {
 function orderCreated(s) {
   delete orderDrafts[draftKey(s)];
   if (s.fromDraft) markDraftUsed(s.fromDraft);
+}
+
+/* ---------- Композер ---------- */
+
+// Что уйдёт при отправке и можно ли отправлять.
+function composerPlan() {
+  const text = $('composer-input').value.trim();
+  const n = comp.photos.length;
+  if (comp.busyPhotos) return { kind: comp.edit ? editKind(comp.edit) : null, ok: false, hint: 'Фото ещё обрабатывается…' };
+  if (comp.edit) return { kind: editKind(comp.edit), ok: !!text, hint: '' };
+  const first = n > 1 ? 'Возьму первое фото' : '';
+  switch (comp.mode) {
+    case 'laser':
+      return n ? { kind: 'laser_photo', ok: true, hint: first } : { kind: 'laser_new', ok: !!text, hint: '' };
+    case '3d':
+      return n ? { kind: 'sketch_photo', ok: true, hint: first } : { kind: 'sketch', ok: !!text, hint: '' };
+    case 'flexi':
+      return n
+        ? { kind: 'sketch', ok: false, hint: 'Подвижная — по описанию, без фото. Убери фото или выбери «3D»' }
+        : { kind: 'sketch', ok: !!text, hint: '', flexi: true };
+    case 'cad':
+      return n
+        ? { kind: 'cad', ok: false, hint: 'Деталь — по описанию с размерами, фото не нужно' }
+        : { kind: 'cad', ok: !!text, hint: '' };
+    default: // scan
+      return {
+        kind: 'scan',
+        ok: n >= 3,
+        hint: n >= 3 ? '' : n ? 'Добавь ещё фото — нужно хотя бы 3' : 'Прикрепи 3–6 фото предмета со всех сторон',
+      };
+  }
+}
+
+// Режим по умолчанию — по тому, что есть: 2+ фото → скан, одно фото → 3D, только текст → последний.
+function guessMode() {
+  if (comp.manual || comp.edit) return;
+  const n = comp.photos.length + comp.busyPhotos;
+  comp.mode = n >= 2 ? 'scan' : n === 1 ? '3d' : lastMode();
+}
+
+function composerTag(iconName, text, onClose, label) {
+  const t = el('span', 'tag');
+  t.appendChild(icon(iconName));
+  t.appendChild(el('span', '', text));
+  const x = el('button');
+  x.type = 'button';
+  x.setAttribute('aria-label', label);
+  x.appendChild(icon('x'));
+  x.addEventListener('click', () => {
+    haptic();
+    onClose();
+  });
+  t.appendChild(x);
+  return t;
+}
+
+function renderComposer() {
+  const tags = $('composer-tags');
+  tags.textContent = '';
+  if (comp.edit) {
+    tags.appendChild(composerTag('pencil', 'Правка: ' + (comp.edit.title || 'Без названия'), composerExitEdit, 'Выйти из правки'));
+  }
+  if (comp.fromDraft) {
+    tags.appendChild(composerTag('message', 'Из чата', composerDropDraft, 'Убрать текст и фото из чата'));
+  }
+
+  const box = $('composer-photos');
+  box.textContent = '';
+  comp.photos.forEach((src, i) => {
+    const ph = el('div', 'cphoto');
+    const img = new Image();
+    img.alt = '';
+    img.src = src;
+    ph.appendChild(img);
+    const del = el('button');
+    del.type = 'button';
+    del.setAttribute('aria-label', 'Убрать фото');
+    del.appendChild(icon('x'));
+    del.addEventListener('click', () => {
+      haptic();
+      comp.photos.splice(i, 1);
+      guessMode();
+      renderComposer();
+    });
+    ph.appendChild(del);
+    box.appendChild(ph);
+  });
+  for (let i = 0; i < comp.busyPhotos; i++) {
+    const ph = el('div', 'cphoto is-loading');
+    ph.appendChild(el('div', 'spinner'));
+    box.appendChild(ph);
+  }
+  box.hidden = !comp.photos.length && !comp.busyPhotos;
+
+  const input = $('composer-input');
+  input.placeholder = comp.edit
+    ? 'Что поменять в «' + (comp.edit.title || 'работе') + '»?'
+    : MODES[comp.mode].placeholder;
+
+  $('composer-modes').hidden = !!comp.edit;
+  $('composer-clip').hidden = !!comp.edit;
+  document.querySelectorAll('#composer-modes .mode').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.mode === comp.mode);
+    b.setAttribute('aria-pressed', b.dataset.mode === comp.mode ? 'true' : 'false');
+  });
+  modeIntoView();
+
+  // Маленький выбор под полем: формат детали или как перевести фото для лазера.
+  const opts = $('composer-opts');
+  opts.textContent = '';
+  let choices = null;
+  if (!comp.edit && comp.mode === 'cad') {
+    choices = { label: 'Формат:', key: 'format', items: [['stl', 'Печать'], ['dxf', 'Лазер'], ['', 'Сам реши']] };
+  } else if (!comp.edit && comp.mode === 'laser' && comp.photos.length) {
+    choices = { label: 'Фото:', key: 'photoMode', items: [['redraw', 'Перерисовать'], ['trace', 'Обвести как есть']] };
+  }
+  if (choices) {
+    opts.appendChild(el('span', 'composer-opts-label', choices.label));
+    choices.items.forEach(([v, text]) => {
+      const b = el('button', 'opt-pill' + (comp[choices.key] === v ? ' is-active' : ''), text);
+      b.type = 'button';
+      b.dataset.v = v;
+      b.addEventListener('click', () => {
+        haptic();
+        comp[choices.key] = v;
+        renderComposer();
+      });
+      opts.appendChild(b);
+    });
+  }
+  opts.hidden = !choices;
+
+  const plan = composerPlan();
+  $('composer-hint').textContent = plan.hint;
+  $('composer-hint').hidden = !plan.hint;
+  $('composer-price').textContent = plan.kind ? shortPrice(plan.kind) : '';
+  const send = $('composer-send');
+  send.disabled = !plan.ok || comp.sending;
+  send.classList.toggle('is-busy', comp.sending);
+  composerAutosize();
+}
+
+// Выбранный режим не должен прятаться за краем ряда чипсов.
+function modeIntoView() {
+  const row = $('composer-modes');
+  const chip = row.querySelector('.mode.is-active');
+  if (!chip || row.hidden || !row.clientWidth) return;
+  const left = chip.offsetLeft - row.offsetLeft;
+  const right = left + chip.offsetWidth;
+  if (left < row.scrollLeft) row.scrollLeft = Math.max(0, left - 8);
+  else if (right > row.scrollLeft + row.clientWidth - 18) row.scrollLeft = right - row.clientWidth + 22;
+}
+
+function composerAutosize() {
+  const ta = $('composer-input');
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, COMPOSER_MAX_H) + 'px';
+}
+
+function composerClear() {
+  $('composer-input').value = '';
+  comp.photos = [];
+  comp.edit = null;
+  comp.fromDraft = null;
+  comp.manual = false;
+  guessMode();
+  renderComposer();
+}
+
+function composerExitEdit() {
+  comp.edit = null;
+  guessMode();
+  renderComposer();
+}
+
+// «Из чата ×» — не надо: убираем подставленное и больше не предлагаем.
+function composerDropDraft() {
+  const at = comp.fromDraft;
+  if (!at) return;
+  $('composer-input').value = '';
+  comp.photos = [];
+  comp.busyPhotos = 0;
+  comp.fromDraft = null;
+  comp.manual = false;
+  guessMode();
+  markDraftUsed(at);
+}
+
+// Открыть композер в нужном режиме (например, с плашки «первая модель в подарок»).
+function composerStart(mode, text) {
+  state.order = null;
+  state.detail = null;
+  state.wait = null;
+  if (state.cad) closeCad();
+  if (mode && MODES[mode]) {
+    comp.mode = mode;
+    comp.manual = true;
+  }
+  comp.edit = null;
+  if (text != null) $('composer-input').value = text;
+  if (state.tab !== 'create') setTab('create');
+  else renderView();
+  renderComposer();
+  $('composer-input').focus();
+}
+
+// «Поправить» в карточке ленты: правка прямо в композере.
+function composerEdit(o) {
+  haptic();
+  comp.edit = o;
+  comp.photos = [];
+  comp.busyPhotos = 0;
+  renderComposer();
+  const ta = $('composer-input');
+  ta.focus();
+}
+
+async function composerAddPhotos(files) {
+  let list = Array.from(files || []);
+  if (!list.length) return;
+  const room = MAX_PHOTOS - comp.photos.length - comp.busyPhotos;
+  if (list.length > room) toast('Больше ' + MAX_PHOTOS + ' фото не нужно');
+  list = list.slice(0, Math.max(0, room));
+  comp.busyPhotos += list.length;
+  guessMode();
+  renderComposer();
+  for (const file of list) {
+    try {
+      comp.photos.push(await compressPhoto(file));
+    } catch (e) {
+      hapticNotify('error');
+      alertBox(e && e.message === 'too_big' ? 'Фото слишком большое — выбери другое' : 'Не получилось открыть фото — выбери другое');
+    }
+    comp.busyPhotos = Math.max(0, comp.busyPhotos - 1);
+    guessMode();
+    renderComposer();
+  }
+}
+
+async function composerSend() {
+  const plan = composerPlan();
+  if (!plan.ok || comp.sending || state.creating) return;
+  haptic();
+  const text = $('composer-input').value.trim().slice(0, PROMPT_MAX);
+  const data = { kind: plan.kind };
+  let title;
+  if (comp.edit) {
+    data.prompt = text;
+    data.base_order = comp.edit.id;
+    title = comp.edit.title || 'Без названия';
+  } else if (plan.kind === 'laser_photo' || plan.kind === 'sketch_photo') {
+    data.images = comp.photos.slice(0, 1);
+    if (text) data.prompt = text;
+    if (plan.kind === 'laser_photo') data.photo_mode = comp.photoMode;
+    title = text ? shortTitle(text) : plan.kind === 'laser_photo' ? 'Рисунок по фото' : 'Фигурка по фото';
+  } else if (plan.kind === 'scan') {
+    data.images = comp.photos.slice(0, MAX_PHOTOS);
+    title = 'Скан по фото';
+  } else {
+    data.prompt = text;
+    title = shortTitle(text);
+    if (plan.kind === 'sketch') data.flexi = plan.flexi === true;
+    if (plan.kind === 'cad') data.format = comp.format;
+  }
+  data.title = title;
+
+  // Как в переписке: поле очищается сразу — можно писать следующее, пока это отправляется.
+  // Не ушло — возвращаем текст и фото, если человек ещё ничего нового не начал.
+  const sent = {
+    text: $('composer-input').value, photos: comp.photos.slice(), edit: comp.edit,
+    fromDraft: comp.fromDraft, mode: comp.mode, manual: comp.manual,
+  };
+  $('composer-input').value = '';
+  comp.photos = [];
+  comp.edit = null;
+  comp.fromDraft = null;
+  if (!sent.manual) guessMode();
+  comp.sending = true;
+  renderComposer();
+  const ok = await startJob(data, title, 'inline');
+  comp.sending = false;
+  if (ok) {
+    if (sent.fromDraft) markDraftUsed(sent.fromDraft);
+    if (!sent.edit) saveLastMode(sent.mode);
+    feedToBottom(true);
+  } else if (!$('composer-input').value.trim() && !comp.photos.length && !comp.busyPhotos && !comp.edit) {
+    $('composer-input').value = sent.text;
+    Object.assign(comp, { photos: sent.photos, edit: sent.edit, fromDraft: sent.fromDraft, mode: sent.mode, manual: sent.manual });
+  }
+  renderComposer();
+}
+
+// Клавиатура не должна закрывать композер: поднимаем его на высоту клавиатуры.
+function syncViewport() {
+  const kb = Math.max(0, Math.round(window.innerHeight - tg.visibleHeight()));
+  document.documentElement.style.setProperty('--kb', kb + 'px');
+  const open = kb > 80 && document.activeElement === $('composer-input') && !$('composer').hidden;
+  document.body.classList.toggle('kb-open', open);
+}
+
+/* ---------- Лента: последние работы и заказы, как переписка ---------- */
+
+function bubble(text, thumbs, count) {
+  const msg = el('div', 'msg msg-me');
+  const b = el('div', 'bubble');
+  const n = Math.max(count || 0, (thumbs || []).length);
+  if (n) {
+    const row = el('div', 'bubble-photos');
+    for (let i = 0; i < Math.min(n, 6); i++) {
+      if (thumbs && thumbs[i]) {
+        const img = new Image();
+        img.alt = '';
+        img.src = thumbs[i];
+        row.appendChild(img);
+      } else {
+        const ph = el('span');
+        ph.appendChild(icon('photo'));
+        row.appendChild(ph);
+      }
+    }
+    b.appendChild(row);
+  }
+  if (text) b.appendChild(el('div', 'bubble-text', text));
+  msg.appendChild(b);
+  return msg;
+}
+
+function pill(iconName, text, onClick, cls) {
+  const b = el('button', 'pill' + (cls ? ' ' + cls : ''));
+  b.type = 'button';
+  if (iconName) b.appendChild(icon(iconName));
+  b.appendChild(el('span', '', text));
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+function withShortPrice(label, kind) {
+  const p = shortPrice(kind);
+  return p ? label + ' · ' + p : label;
+}
+
+// Кнопки следующего шага у готовой работы.
+function resultActions(o) {
+  const k = kindOf(o);
+  const out = [];
+  if (k === 'sketch') {
+    out.push(pill('cube', withShortPrice('Лепим 3D', 'model'), () => feedMakeModel(o)));
+    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
+    if (o.editable !== false) out.push(pill('brush', 'В редактор', () => openOrderInEditor(o)));
+  } else if (k === 'model') {
+    if (isStl(o) && hasFile(o)) {
+      out.push(pill('rotate', 'Покрутить в 3D', () => {
+        openDetail(o);
+        openViewer();
+      }));
+    }
+    if (hasFile(o) && o.jointed !== true && isNewestModel(o)) {
+      out.push(pill('file', 'Другой формат', () => {
+        haptic();
+        startJob({ kind: 'model_format', format: fileFormat(o) === 'STL' ? '3mf' : 'stl', title: o.title || '' }, o.title || '3D-модель', 'inline')
+          .then((ok) => { if (ok) feedToBottom(true); });
+      }));
+    }
+  } else if (k === 'laser') {
+    if (hasFile(o) && o.cad !== true) {
+      out.push(pill('ruler', 'Другой размер', () => {
+        openDetail(o);
+        $('detail-sizes').hidden = false;
+      }));
+    }
+    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
+  } else {
+    out.push(pill('ruler', 'Открыть конструктор', () => openCad(o.id)));
+    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
+  }
+  return out;
+}
+
+function feedMakeModel(o) {
+  haptic();
+  const data = { kind: 'model', base_order: o.id, format: 'stl', title: o.title || '' };
+  if (isFlexiMode(o)) data.flexi = true;
+  startJob(data, o.title || '3D-модель', 'inline').then((ok) => { if (ok) feedToBottom(true); });
+}
+
+function resultCard(o) {
+  const msg = el('div', 'msg msg-bot');
+  const card = el('div', 'result');
+  const main = el('button', 'result-main');
+  main.type = 'button';
+  const thumb = el('div', 'thumb result-thumb');
+  fillPreview(thumb, o);
+  main.appendChild(thumb);
+  const info = el('div', 'result-info');
+  info.appendChild(el('div', 'result-title', o.title || 'Без названия'));
+  const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
+  const meta = [kindName];
+  if (kindOf(o) === 'model' || kindOf(o) === 'laser') meta.push(formatLabel(o));
+  if (isSketch(o) && isFlexiMode(o)) meta.push('подвижная');
+  info.appendChild(el('div', 'result-meta', meta.filter(Boolean).join(' · ')));
+  main.appendChild(info);
+  main.addEventListener('click', () => {
+    haptic();
+    openDetail(o);
+  });
+  card.appendChild(main);
+  const actions = el('div', 'result-actions');
+  resultActions(o).forEach((b) => actions.appendChild(b));
+  card.appendChild(actions);
+  msg.appendChild(card);
+  return msg;
+}
+
+const JOB_ICONS = { sketch: 'pencil', laser: 'laser', model: 'cube', cad: 'ruler' };
+
+function jobCard(j) {
+  const msg = el('div', 'msg msg-bot');
+  const running = j.status === 'running';
+  const card = el('div', 'result job ' + (running ? 'is-running' : 'is-' + j.status));
+  card.dataset.job = j.id;
+  const main = el('button', 'result-main');
+  main.type = 'button';
+  const thumb = el('div', 'thumb result-thumb');
+  const kindIcon = running ? JOB_ICONS[(JOB_KINDS[j.kind] || {}).group] || 'sparkle'
+    : j.status === 'no_credits' ? 'wallet' : j.status === 'reply' ? 'message' : 'alert';
+  thumb.appendChild(icon(kindIcon));
+  main.appendChild(thumb);
+  const info = el('div', 'result-info');
+  info.appendChild(el('div', 'result-title', j.title || 'Без названия'));
+  const stage = el('div', 'job-stage', running ? jobStage(j) : (j.text || jobDefaultText(j)));
+  info.appendChild(stage);
+  if (running) info.appendChild(el('div', 'job-line'));
+  main.appendChild(info);
+  main.addEventListener('click', () => {
+    haptic();
+    openWait(j.id);
+  });
+  card.appendChild(main);
+
+  const actions = el('div', 'result-actions');
+  if (j.status === 'error') actions.appendChild(pill('refresh', 'Попробовать ещё раз', () => feedRetry(j)));
+  if (j.status === 'no_credits') {
+    actions.appendChild(pill('wallet', 'Пополнить', () => {
+      haptic();
+      jobRemove(j);
+      goToBalance();
+    }));
+  }
+  if (j.status === 'reply') actions.appendChild(pill('pencil', 'Ответить', () => composerFromJob(j)));
+  if (!running) {
+    actions.appendChild(pill(null, 'Убрать', () => {
+      haptic();
+      jobRemove(j);
+    }, 'is-ghost'));
+  }
+  card.appendChild(actions);
+  msg.appendChild(card);
+  return msg;
+}
+
+function jobDefaultText(j) {
+  if (j.status === 'no_credits') return 'Не хватает кредитов. Пополни баланс — и попробуй ещё раз.';
+  if (j.status === 'reply') return 'Бот не понял запрос. Попробуй описать по-другому.';
+  return 'Что-то пошло не так. Кредиты не списались — попробуй ещё раз.';
+}
+
+// Ошибка в ленте: то же самое ещё раз. Фото после перезапуска не сохраняются — тогда в композер.
+function feedRetry(j) {
+  haptic();
+  const images = j.data.images || [];
+  if (j.photos > images.length) {
+    composerFromJob(j);
+    toast('Прикрепи фото ещё раз');
+    return;
+  }
+  const data = j.data;
+  const title = j.title;
+  jobRemove(j);
+  startJob(data, title, 'inline').then((ok) => { if (ok) feedToBottom(true); });
+}
+
+// «Ответить» на вопрос бота — тот же запрос в композер, можно дописать.
+function composerFromJob(j) {
+  haptic();
+  const d = j.data || {};
+  jobRemove(j);
+  comp.edit = null;
+  comp.fromDraft = null;
+  comp.photos = (d.images || []).slice();
+  comp.busyPhotos = 0;
+  comp.manual = true;
+  const k = d.kind;
+  if (k === 'laser_edit' || k === 'sketch_edit' || k === 'cad_edit') {
+    comp.edit = findOrder(d.base_order);
+    comp.manual = false;
+  } else if (k === 'laser_new' || k === 'laser_photo') comp.mode = 'laser';
+  else if (k === 'sketch') comp.mode = d.flexi ? 'flexi' : '3d';
+  else if (k === 'sketch_photo') comp.mode = '3d';
+  else if (k === 'cad') comp.mode = 'cad';
+  else if (k === 'scan') comp.mode = 'scan';
+  if (d.format != null && k === 'cad') comp.format = d.format;
+  if (d.photo_mode) comp.photoMode = d.photo_mode;
+  $('composer-input').value = d.prompt || '';
+  renderComposer();
+  $('composer-input').focus();
+}
+
+function examplesBlock() {
+  const wrap = el('div', 'examples');
+  wrap.appendChild(el('p', 'examples-title', 'Попробуй, например:'));
+  EXAMPLES.forEach((x) => {
+    const b = el('button', 'example');
+    b.type = 'button';
+    b.appendChild(icon(MODES[x.mode].icon));
+    const t = el('span', '', x.text);
+    t.appendChild(el('small', '', x.note));
+    b.appendChild(t);
+    b.addEventListener('click', () => {
+      haptic();
+      comp.mode = x.mode;
+      comp.manual = true;
+      comp.edit = null;
+      $('composer-input').value = x.text;
+      renderComposer();
+      $('composer-input').focus();
+    });
+    wrap.appendChild(b);
+  });
+  return wrap;
+}
+
+let feedKey = '';
+
+function renderFeed() {
+  const box = $('feed');
+  if (!box) return;
+  const orders = ((state.me && state.me.orders) || []).slice(0, FEED_SIZE).reverse(); // старые сверху, как в переписке
+  const list = jobs.list.slice().reverse();
+  const key = JSON.stringify([state.me ? 1 : 0, orders, list.map((j) => [j.id, j.status, j.text, (j.thumbs || []).length]), jobPrice('model')]);
+  if (key !== feedKey) {
+    const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
+    feedKey = key;
+    box.textContent = '';
+    orders.forEach((o) => {
+      const req = savedPrompt(o.id);
+      box.appendChild(bubble(req && req.prompt ? req.prompt : o.title || '', req && req.thumbs, req && req.photos));
+      box.appendChild(resultCard(o));
+    });
+    list.forEach((j) => {
+      box.appendChild(bubble(j.data.prompt || (j.photos ? '' : j.title), j.thumbs || (j.data.images || []).slice(0, 6), j.photos));
+      box.appendChild(jobCard(j));
+    });
+    if (state.me && !orders.length && !list.length) box.appendChild(examplesBlock());
+    if (nearBottom && state.createOpen) feedToBottom(false);
+  }
+  jobsSyncTicker();
+}
+
+// Этапы в карточках ожидания — по тому же таймеру, что и на экране ожидания.
+function feedTick() {
+  document.querySelectorAll('#feed .job.is-running').forEach((card) => {
+    const j = jobFind(card.dataset.job);
+    if (j && j.status === 'running') card.querySelector('.job-stage').textContent = jobStage(j);
+  });
+}
+
+function feedToBottom(smooth) {
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  });
 }
 
 /* ---------- Экран заказа ---------- */
@@ -326,22 +849,6 @@ function closeOrder() {
   }
   renderView();
   window.scrollTo(0, state.detail ? 0 : state.listScroll || 0);
-}
-
-// «Изменить запрос» после вопроса бота или ошибки — та же форма с теми же данными.
-function openOrderFromJob(form, j) {
-  const d = j.data || {};
-  const base = form === 'edit' ? findOrder(d.base_order) : null;
-  const s = newOrderState(form, base);
-  if (d.kind === 'laser_photo' || d.kind === 'sketch_photo') s.mode = 'photo';
-  if (d.kind === 'sketch_photo') s.extra = d.prompt || '';
-  else s.prompt = d.prompt || '';
-  if (d.photo_mode) s.photoMode = d.photo_mode;
-  s.flexi = d.flexi === true;
-  if (d.format != null) s.format = d.format;
-  s.photos = (d.images || []).slice();
-  orderDrafts[draftKey(s)] = s;
-  openOrder(form, { base });
 }
 
 function saveOrderFields() {
@@ -451,8 +958,8 @@ function renderPhotos() {
 
   const full = s.photos.length + s.busyPhotos >= max;
   const single = max === 1;
-  $('photo-pick').textContent = single && s.photos.length ? '🖼 Другое фото' : single ? '🖼 Выбрать фото' : '🖼 Добавить фото';
-  $('photo-shot').textContent = single && s.photos.length ? '📷 Переснять' : '📷 Снять';
+  setLabel($('photo-pick'), single && s.photos.length ? 'Другое фото' : single ? 'Выбрать фото' : 'Добавить фото');
+  setLabel($('photo-shot'), single && s.photos.length ? 'Переснять' : 'Снять');
   $('photo-btns').hidden = !single && full;
 
   const min = FORMS[s.form].minPhotos || 0;
@@ -595,9 +1102,7 @@ function submitOrder() {
 /* ---------- Кнопки ---------- */
 
 function bindCreate() {
-  document.querySelectorAll('.tile').forEach((t) => {
-    t.addEventListener('click', () => openOrder(t.dataset.form));
-  });
+  bindComposer();
 
   document.querySelectorAll('#order-modes button').forEach((b) => {
     b.addEventListener('click', () => {
@@ -638,12 +1143,6 @@ function bindCreate() {
     if (state.order) state.order.extra = $('order-extra').value;
   });
 
-  $('chat-draft-close').addEventListener('click', () => {
-    if (!chat.draft) return;
-    haptic();
-    markDraftUsed(chat.draft.at);
-  });
-
   $('photo-pick').addEventListener('click', () => {
     haptic();
     $('photo-input').click();
@@ -659,4 +1158,41 @@ function bindCreate() {
       addPhotos(files);
     });
   });
+}
+
+function bindComposer() {
+  const input = $('composer-input');
+  input.addEventListener('input', () => renderComposer());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      composerSend();
+    }
+  });
+  input.addEventListener('focus', () => setTimeout(syncViewport, 50));
+  input.addEventListener('blur', () => setTimeout(syncViewport, 50));
+  document.querySelectorAll('#composer-modes .mode').forEach((b) => {
+    b.addEventListener('click', () => {
+      haptic();
+      comp.mode = b.dataset.mode;
+      comp.manual = true;
+      renderComposer();
+    });
+  });
+  $('composer-clip').addEventListener('click', () => {
+    haptic();
+    $('composer-file').click();
+  });
+  $('composer-file').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    composerAddPhotos(files);
+  });
+  $('composer-send').addEventListener('click', composerSend);
+
+  tg.onViewport(syncViewport);
+  // высота композера — отступ ленты снизу, чтобы последняя карточка не пряталась
+  const setH = () => document.documentElement.style.setProperty('--composer-h', $('composer').offsetHeight + 'px');
+  if (window.ResizeObserver) new ResizeObserver(setH).observe($('composer'));
+  else window.addEventListener('resize', setH);
 }

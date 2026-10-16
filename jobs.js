@@ -25,10 +25,10 @@ const JOB_KINDS = {
 
 // Этапы — по таймеру, сервер про них не знает. T — характерное время для полоски, сек.
 const JOB_GROUPS = {
-  sketch: { emoji: '✏️', verb: 'Рисую', eta: 'Обычно 30–60 секунд', T: 40, stages: [[0, 'Рисую эскиз…'], [25, 'Дорисовываю детали…']] },
-  laser: { emoji: '🔥', verb: 'Рисую', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Рисую…'], [30, 'Перевожу в контуры для лазера…']] },
-  model: { emoji: '🧊', verb: 'Леплю', eta: 'Обычно 2–5 минут', T: 170, stages: [[0, 'Леплю 3D-модель…'], [90, 'Чиню сетку для печати…'], [180, 'Почти готово…']] },
-  cad: { emoji: '📐', verb: 'Черчу', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Черчу деталь…']] },
+  sketch: { icon: 'pencil', verb: 'Рисую', eta: 'Обычно 30–60 секунд', T: 40, stages: [[0, 'Рисую эскиз…'], [25, 'Дорисовываю детали…']] },
+  laser: { icon: 'laser', verb: 'Рисую', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Рисую…'], [30, 'Перевожу в контуры для лазера…']] },
+  model: { icon: 'cube', verb: 'Леплю', eta: 'Обычно 2–5 минут', T: 170, stages: [[0, 'Леплю 3D-модель…'], [90, 'Чиню сетку для печати…'], [180, 'Почти готово…']] },
+  cad: { icon: 'ruler', verb: 'Черчу', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Черчу деталь…']] },
 };
 
 const JOB_ERRORS = {
@@ -109,17 +109,22 @@ function jobRemove(j) {
   const i = jobs.list.indexOf(j);
   if (i !== -1) jobs.list.splice(i, 1);
   jobsSave();
-  renderJobsBar();
+  renderFeed();
 }
 
-// Текст эскиза — для «🔄 Другой вариант».
-function rememberPrompt(orderId, data) {
-  if (!orderId || !data || data.kind !== 'sketch' || !data.prompt) return;
+// Что человек просил — для облачка в ленте и «Другой вариант» у эскиза. Фото — крошечными миниатюрами.
+function rememberPrompt(orderId, data, thumbs) {
+  if (!orderId || !data) return;
+  const photos = (data.images || []).length || (data.photos || 0);
+  if (!data.prompt && !photos) return;
   let all = {};
   try { all = JSON.parse(localStorage.getItem(PROMPTS_KEY) || '{}') || {}; } catch (e) { all = {}; }
-  all[orderId] = { prompt: data.prompt, flexi: data.flexi === true, title: data.title || '', at: Date.now() };
+  all[orderId] = {
+    prompt: data.prompt || '', kind: data.kind, flexi: data.flexi === true, title: data.title || '',
+    photos, thumbs: (thumbs || []).slice(0, 3), at: Date.now(),
+  };
   const keys = Object.keys(all).sort((a, b) => all[b].at - all[a].at);
-  keys.slice(50).forEach((k) => delete all[k]);
+  keys.slice(40).forEach((k) => delete all[k]);
   try { localStorage.setItem(PROMPTS_KEY, JSON.stringify(all)); } catch (e) { /* ок */ }
 }
 
@@ -132,14 +137,34 @@ function savedPrompt(orderId) {
   }
 }
 
+// Миниатюра 96 px для облачка в ленте: в localStorage кладём её, а не само фото.
+function makeThumb(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = 96;
+      c.height = 96;
+      const s = Math.min(img.width, img.height);
+      c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 96, 96);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 /* ---------- Отправка заказа ---------- */
 
-// fromMain — нажали MainButton: крутим её прогресс. Иначе — затемнение «Отправляю…».
-async function startJob(data, title, fromMain) {
+// how: 'main' — нажали MainButton, крутим её прогресс; 'overlay' — затемнение «Отправляю…»;
+// 'inline' — из композера и ленты: экран не меняем, заказ появится в ленте.
+async function startJob(data, title, how) {
+  if (how === true) how = 'main';
+  else if (!how) how = 'overlay';
   if (state.creating) return false;
   state.creating = true;
-  if (fromMain) tg.MainButton.showProgress(false);
-  else {
+  if (how === 'main') tg.MainButton.showProgress(false);
+  else if (how === 'overlay') {
     $('busy-text').textContent = 'Отправляю…';
     $('busy').hidden = false;
   }
@@ -157,11 +182,20 @@ async function startJob(data, title, fromMain) {
     };
     jobs.list.unshift(j);
     jobsSave();
-    renderJobsBar();
-    if (state.order) orderCreated(state.order);
-    state.order = null;
-    state.detail = null;
-    openWait(j.id);
+    if (data.images && data.images.length) {
+      Promise.all(data.images.slice(0, 3).map(makeThumb)).then((t) => {
+        j.thumbs = t.filter(Boolean);
+        jobsSave();
+        renderFeed();
+      });
+    }
+    if (how !== 'inline') {
+      if (state.order) orderCreated(state.order);
+      state.order = null;
+      state.detail = null;
+      openWait(j.id);
+    }
+    renderFeed();
     jobsEnsureTimer();
     return true;
   } catch (err) {
@@ -169,8 +203,8 @@ async function startJob(data, title, fromMain) {
     return false;
   } finally {
     state.creating = false;
-    if (fromMain) tg.MainButton.hideProgress();
-    else $('busy').hidden = true;
+    if (how === 'main') tg.MainButton.hideProgress();
+    else if (how === 'overlay') $('busy').hidden = true;
   }
 }
 
@@ -264,7 +298,7 @@ async function jobDone(j, r) {
   const watching = state.wait === j.id;
   jobRemove(j);
   const order = r.order || null;
-  if (order) rememberPrompt(order.id, j.data);
+  if (order) rememberPrompt(order.id, Object.assign({ photos: j.photos }, j.data), j.thumbs);
   hapticNotify('success');
   const title = (order && order.title) || j.title;
   if (watching) {
@@ -286,7 +320,7 @@ function jobFinish(j, r) {
   j.status = r.status;
   j.text = r.text || '';
   jobsSave();
-  renderJobsBar();
+  renderFeed();
   loadMe(false);
   hapticNotify(r.status === 'reply' ? 'warning' : 'error');
   if (state.wait === j.id) renderWait();
@@ -347,7 +381,7 @@ function renderWait() {
   const g = jobGroup(j.kind);
   const running = j.status === 'running';
   $('view-wait').classList.toggle('is-done', !running);
-  $('wait-emoji').textContent = running ? g.emoji : j.status === 'no_credits' ? '💰' : j.status === 'reply' ? '💬' : '😕';
+  $('wait-emoji').replaceChildren(icon(running ? g.icon : j.status === 'no_credits' ? 'wallet' : j.status === 'reply' ? 'message' : 'alert'));
   $('wait-title').textContent = j.title || 'Без названия';
   $('wait-progress').hidden = !running;
   $('wait-note').hidden = !running;
@@ -362,7 +396,7 @@ function renderWait() {
   $('wait-retry').hidden = j.status !== 'error';
   $('wait-topup').hidden = j.status !== 'no_credits';
   $('wait-change').hidden = running || !jobFormFor(j);
-  $('wait-hide').textContent = running ? 'Свернуть' : 'Закрыть';
+  setLabel($('wait-hide'), running ? 'Свернуть' : 'Закрыть');
 }
 
 function renderWaitTick() {
@@ -376,9 +410,16 @@ function renderWaitTick() {
   $('wait-bar').style.width = (p * 100).toFixed(1) + '%';
 }
 
+// Раз в секунду — этапы на экране ожидания и в карточках ленты.
 function jobsSyncTicker() {
-  const need = !!state.wait && !state.cad && !state.flexi;
-  if (need && !jobs.ticker) jobs.ticker = setInterval(renderWaitTick, 1000);
+  const feed = state.createOpen && jobs.list.some((j) => j.status === 'running');
+  const need = (!!state.wait || feed) && !state.cad && !state.flexi;
+  if (need && !jobs.ticker) {
+    jobs.ticker = setInterval(() => {
+      renderWaitTick();
+      feedTick();
+    }, 1000);
+  }
   else if (!need && jobs.ticker) {
     clearInterval(jobs.ticker);
     jobs.ticker = 0;
@@ -420,15 +461,10 @@ function jobChange() {
   const j = jobFind(state.wait);
   if (!j) return;
   haptic();
-  const form = jobFormFor(j);
-  jobRemove(j);
+  // тот же запрос — в композер на «Создать», можно поправить и отправить
   state.wait = null;
-  if (!form) {
-    goHome();
-    return;
-  }
-  state.tab = 'create';
-  openOrderFromJob(form, j);
+  goHome();
+  composerFromJob(j);
 }
 
 function jobTopUp() {
@@ -436,33 +472,6 @@ function jobTopUp() {
   haptic();
   if (j) jobRemove(j);
   goToBalance();
-}
-
-/* ---------- Плашки заказов на главной ---------- */
-
-function jobPillText(j) {
-  const q = '„' + (j.title || 'Без названия') + '“';
-  if (j.status === 'error') return '😕 Не вышло: ' + q;
-  if (j.status === 'no_credits') return '💰 Не хватает кредитов: ' + q;
-  if (j.status === 'reply') return '💬 Есть вопрос: ' + q;
-  return '⏳ ' + ((JOB_KINDS[j.kind] || {}).verb || jobGroup(j.kind).verb) + ' ' + q + '…';
-}
-
-function renderJobsBar() {
-  const box = $('jobs-bar');
-  box.textContent = '';
-  jobs.list.forEach((j) => {
-    const b = el('button', 'job-pill' + (j.status !== 'running' ? ' is-' + j.status : ''));
-    b.type = 'button';
-    b.appendChild(el('span', 'job-pill-text', jobPillText(j)));
-    b.appendChild(el('span', 'job-pill-go', '›'));
-    b.addEventListener('click', () => {
-      haptic();
-      openWait(j.id);
-    });
-    box.appendChild(b);
-  });
-  box.hidden = jobs.list.length === 0;
 }
 
 /* ---------- Запуск ---------- */
@@ -480,7 +489,7 @@ function bindJobs() {
 // После перезапуска: опрос продолжается; если ждали результат на экране ожидания — открываем его снова.
 function jobsResume(openWatched) {
   jobsLoad();
-  renderJobsBar();
+  renderFeed();
   const watched = jobs.list.find((j) => j.watch);
   if (openWatched && watched) openWait(watched.id);
   jobsEnsureTimer();

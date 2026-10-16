@@ -1,7 +1,8 @@
 /* Грава — всё, что зависит от Телеги, живёт здесь.
    Вне Телеги (будущий сайт, ?mock=1 в браузере) — запасные варианты:
    своя кнопка внизу вместо MainButton, кнопка «‹ Назад» и history.back() вместо BackButton,
-   alert/confirm вместо окошек Телеги. */
+   alert/confirm вместо окошек Телеги.
+   Подключается в <head>: тему (светлая/тёмная) ставит до первой отрисовки. */
 'use strict';
 
 const tg = (() => {
@@ -11,6 +12,31 @@ const tg = (() => {
   function supports(version) {
     if (!inside) return false;
     try { return w.isVersionAtLeast(version); } catch (e) { return false; }
+  }
+
+  /* ---------- Тема: в Телеге — её colorScheme, в браузере — prefers-color-scheme ---------- */
+
+  const themeListeners = [];
+  let dark = null;
+  try { dark = window.matchMedia('(prefers-color-scheme: dark)'); } catch (e) { /* старый браузер */ }
+
+  function scheme() {
+    if (inside && (w.colorScheme === 'dark' || w.colorScheme === 'light')) return w.colorScheme;
+    return dark && dark.matches ? 'dark' : 'light';
+  }
+
+  function applyTheme() {
+    const s = scheme();
+    if (document.documentElement.dataset.theme === s) return;
+    document.documentElement.dataset.theme = s;
+    themeListeners.forEach((fn) => fn(s));
+  }
+  applyTheme();
+  if (inside) {
+    try { w.onEvent('themeChanged', applyTheme); } catch (e) { /* старый клиент */ }
+  }
+  if (dark) {
+    try { dark.addEventListener('change', applyTheme); } catch (e) { /* Safari < 14 */ }
   }
 
   /* ---------- Своя кнопка внизу вместо MainButton ---------- */
@@ -104,6 +130,9 @@ const tg = (() => {
     inside,
     initData: inside ? w.initData : '',
     startParam: (inside && w.initDataUnsafe && w.initDataUnsafe.start_param) || '',
+    userName: (inside && w.initDataUnsafe && w.initDataUnsafe.user && w.initDataUnsafe.user.first_name) || '',
+    get theme() { return document.documentElement.dataset.theme || 'light'; },
+    onTheme(fn) { themeListeners.push(fn); },
     get themeParams() { return (inside && w.themeParams) || {}; },
     MainButton: inside ? w.MainButton : fallbackMainButton(),
     BackButton: inside ? w.BackButton : fallbackBackButton(),
@@ -164,12 +193,43 @@ const tg = (() => {
       if (!inside) return;
       w.ready();
       w.expand();
-      if (supports('6.1')) {
-        try {
-          w.setHeaderColor('bg_color');
-          w.setBackgroundColor('bg_color');
-        } catch (e) { /* ок */ }
+    },
+    // Шапка, фон и нижняя полоса Телеги — цветом фона приложения.
+    paint(bg) {
+      if (!inside) {
+        let meta = document.querySelector('meta[name="theme-color"]');
+        if (!meta) {
+          meta = document.createElement('meta');
+          meta.name = 'theme-color';
+          document.head.appendChild(meta);
+        }
+        meta.content = bg;
+        return;
       }
+      try {
+        if (supports('6.9')) w.setHeaderColor(bg);
+        else if (supports('6.1')) w.setHeaderColor('bg_color');
+      } catch (e) { /* ок */ }
+      try { if (supports('6.1')) w.setBackgroundColor(bg); } catch (e) { /* ок */ }
+      try { if (supports('7.10') && w.setBottomBarColor) w.setBottomBarColor(bg); } catch (e) { /* ок */ }
+    },
+    // Видимая высота: в Телеге — viewportStableHeight, в браузере — visualViewport (клавиатура её уменьшает).
+    visibleHeight() {
+      let h = window.innerHeight;
+      if (inside && w.viewportStableHeight > 0) h = Math.min(h, w.viewportStableHeight);
+      const vv = window.visualViewport;
+      if (vv) h = Math.min(h, vv.height + vv.offsetTop);
+      return h;
+    },
+    onViewport(fn) {
+      if (inside) {
+        try { w.onEvent('viewportChanged', fn); } catch (e) { /* старый клиент */ }
+      }
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', fn);
+        window.visualViewport.addEventListener('scroll', fn);
+      }
+      window.addEventListener('resize', fn);
     },
     // Свайп вниз сворачивает приложение — в редакторе и 3D его выключаем.
     swipes(on) {

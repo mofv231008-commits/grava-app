@@ -315,7 +315,7 @@ function cadSetData(data) {
   $('cad-format').textContent = c.format === 'dxf' ? '🔥 DXF для лазера' : '🧊 STL для 3D-принтера';
   $('cad-format').hidden = false;
   $('cad-preview').classList.toggle('is-sheet', c.format === 'dxf');
-  $('cad-ask').textContent = withPrice('✏️ Поправить словами', 'cad_edit');
+  setLabel($('cad-ask'), withPrice('Поправить словами', 'cad_edit'));
   $('cad-ask').hidden = false;
   cadSetCode(String(data.scad || ''));
 }
@@ -332,7 +332,7 @@ function closeCad() {
   cadTeardown();
   state.cad = null;
   tg.MainButton.hideProgress();
-  tg.MainButton.setParams({ is_active: true, color: tg.themeParams.button_color || undefined, text_color: tg.themeParams.button_text_color || undefined });
+  tg.MainButton.setParams(Object.assign({ is_active: true }, mainButtonColors(true)));
   tg.MainButton.hide();
   tg.BackButton.hide();
   $('busy').hidden = true;
@@ -952,14 +952,11 @@ function cadUpdateMainButton() {
     return;
   }
   const ready = c.status === 'ok' && !c.pending;
-  const theme = tg.themeParams || {};
-  tg.MainButton.setParams({
+  tg.MainButton.setParams(Object.assign({
     text: c.format === 'dxf' ? '📤 Прислать DXF в чат' : '📤 Прислать STL в чат',
     is_visible: true,
     is_active: ready,
-    color: ready ? theme.button_color || undefined : theme.hint_color || theme.button_color || undefined,
-    text_color: theme.button_text_color || undefined,
-  });
+  }, mainButtonColors(ready)));
 }
 
 function cadBusy(on, text) {

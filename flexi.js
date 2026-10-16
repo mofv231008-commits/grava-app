@@ -123,7 +123,7 @@ function closeFlexi() {
   flexiTeardown();
   state.flexi = null;
   tg.MainButton.hideProgress();
-  tg.MainButton.setParams({ is_active: true, color: tg.themeParams.button_color || undefined, text_color: tg.themeParams.button_text_color || undefined });
+  tg.MainButton.setParams(Object.assign({ is_active: true }, mainButtonColors(true)));
   tg.MainButton.hide();
   tg.BackButton.hide();
   $('busy').hidden = true;
@@ -1101,14 +1101,11 @@ function flexiUpdateMainButton() {
     return;
   }
   const ready = flexiReady(f);
-  const theme = tg.themeParams || {};
-  tg.MainButton.setParams({
+  tg.MainButton.setParams(Object.assign({
     text: '📤 Прислать STL в чат',
     is_visible: true,
     is_active: ready,
-    color: ready ? theme.button_color || undefined : theme.hint_color || theme.button_color || undefined,
-    text_color: theme.button_text_color || undefined,
-  });
+  }, mainButtonColors(ready)));
 }
 
 async function flexiExport() {

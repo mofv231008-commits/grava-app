@@ -202,7 +202,8 @@ async function mockGet(params) {
   await mockWait(250);
   const db = mockState();
   if (params.a === 'me') return mockCopy(db.me);
-  if (params.a === 'chatdraft') return { ok: true, draft: db.chatdraft ? mockCopy(db.chatdraft) : null };
+  // черновик из чата — только когда открыли как с кнопки бота: ?mock=1&draft=1
+  if (params.a === 'chatdraft') return { ok: true, draft: db.chatdraft && /[?&]draft=1/.test(location.search) ? mockCopy(db.chatdraft) : null };
   if (params.a === 'job') return mockStatus(params.id);
   if (params.a === 'send') return { ok: true };
   if (params.a === 'cad') {

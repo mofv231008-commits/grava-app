@@ -87,7 +87,7 @@ function isFlexiMode(o) { return o.mode === '3d_flexi' || o['3d_flexi'] === true
 function kindOf(o) { return isSketch(o) ? 'sketch' : isModel(o) ? 'model' : isCadDraft(o) ? 'cad' : 'laser'; }
 function fileFormat(o) { return isModel(o) ? String(o.format || 'stl').toUpperCase() : 'DXF'; }
 function isStl(o) { return isModel(o) && fileFormat(o) === 'STL'; }
-function kindEmoji(o) { return { cad: '📐', model: '🧊', sketch: '✏️', laser: '🔥' }[kindOf(o)]; }
+function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', laser: 'laser' }[kindOf(o)]; }
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 
 function formatLabel(o) {
@@ -114,13 +114,43 @@ function toast(text) {
   }, 2600);
 }
 
-// Превью работы: картинка с сервера или заглушка с эмодзи.
+// Линейная иконка из спрайта в index.html: <svg class="i"><use href="#i-…"/></svg>.
+function icon(name) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'i');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(NS, 'use');
+  use.setAttribute('href', '#i-' + name);
+  use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#i-' + name); // старый Safari
+  svg.appendChild(use);
+  return svg;
+}
+
+// Текст кнопки с иконкой: меняем только подпись, иконку не трогаем.
+function setLabel(btn, text) {
+  const span = btn.querySelector('span');
+  if (span) span.textContent = text;
+  else btn.textContent = text;
+}
+
+// Цвет из темы (CSS-переменная) — для кнопок и шапки Телеги.
+function themeColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// У эскизов превью есть всегда, даже если в старом ответе нет has_preview.
+function hasPreview(o) {
+  return o.has_preview === true || (isSketch(o) && o.has_preview !== false);
+}
+
+// Превью работы: картинка с сервера или заглушка с иконкой.
 function fillPreview(box, o) {
   box.textContent = '';
   const ph = el('div', 'placeholder');
   box.appendChild(ph);
-  if (!o.has_preview) {
-    ph.textContent = kindEmoji(o);
+  if (!hasPreview(o)) {
+    ph.appendChild(icon(kindIcon(o)));
     return;
   }
   ph.classList.add('is-loading');
@@ -135,7 +165,7 @@ function fillPreview(box, o) {
   img.onerror = () => {
     img.remove();
     ph.classList.remove('is-loading');
-    ph.textContent = kindEmoji(o);
+    ph.replaceChildren(icon(kindIcon(o)));
   };
   img.src = Api.fileUrl(o.id, 'preview');
   box.appendChild(img);
@@ -173,6 +203,10 @@ function renderView() {
   $('view-flexi').hidden = top !== 'flexi';
   $('tabbar').hidden = !inApp || overlay;
   document.body.classList.toggle('no-tabbar', !inApp || overlay);
+  const composerOn = inApp && !overlay && state.tab === 'create';
+  $('composer').hidden = !composerOn;
+  document.body.classList.toggle('composer-on', composerOn);
+  if (!composerOn && document.activeElement === $('composer-input')) $('composer-input').blur();
   document.querySelectorAll('.tab').forEach((t) => {
     t.classList.toggle('is-active', t.dataset.tab === state.tab);
   });
@@ -185,7 +219,12 @@ function renderView() {
   const createOpen = inApp && !overlay && state.tab === 'create';
   if (createOpen !== state.createOpen) {
     state.createOpen = createOpen;
-    if (createOpen) loadChatDraft();
+    if (createOpen) {
+      loadChatDraft();
+      renderComposer();
+      feedToBottom(false); // как в переписке — к последнему
+    }
+    syncViewport();
   }
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
@@ -213,14 +252,20 @@ function syncButtons() {
     tg.MainButton.hide();
     return;
   }
-  const theme = tg.themeParams;
-  tg.MainButton.setParams({
-    text,
-    is_visible: true,
-    is_active: true,
-    color: theme.button_color || undefined,
-    text_color: theme.button_text_color || undefined,
-  });
+  tg.MainButton.setParams(Object.assign({ text, is_visible: true, is_active: true }, mainButtonColors(true)));
+}
+
+// Главная кнопка Телеги — нашим акцентом; неактивная — спокойным серым.
+function mainButtonColors(active) {
+  return active
+    ? { color: themeColor('--accent'), text_color: themeColor('--on-accent') }
+    : { color: themeColor('--surface-2'), text_color: themeColor('--text-2') };
+}
+
+// Шапка и фон Телеги — под тему; при смене темы перекрашиваем и главную кнопку.
+function paintChrome() {
+  tg.paint(themeColor('--bg'));
+  if (!$('app').hidden) syncButtons();
 }
 
 function setTab(tab) {
@@ -272,24 +317,23 @@ function workCard(o) {
   card.tabIndex = 0;
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
-  if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', '🦴 на шарнирах'));
-  else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? '✏️ эскиз · 🦎' : '✏️ эскиз'));
+  if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', 'на шарнирах'));
+  else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? 'эскиз · подвижная' : 'эскиз'));
   card.appendChild(thumb);
 
   const body = el('div', 'work-body');
   body.appendChild(el('div', 'work-title', o.title || 'Без названия'));
-  const meta = el('div', 'work-meta');
-  if (cadDraft) {
-    meta.classList.add('is-wrap');
-    meta.appendChild(el('span', '', 'Деталь по размерам · файла ещё нет'));
-  } else {
-    meta.appendChild(el('span', '', formatLabel(o)));
-    meta.appendChild(el('span', '', formatDate(o.date)));
-  }
+  // «STL · 120 мм · 15.10» — одной строкой
+  const meta = el('div', 'work-meta', cadDraft
+    ? 'Деталь по размерам · файла ещё нет'
+    : [formatLabel(o), formatDate(o.date)].filter(Boolean).join(' · '));
+  if (cadDraft) meta.classList.add('is-wrap');
   body.appendChild(meta);
 
   if (o.flexi === true) {
-    const btn = el('button', 'work-cad-btn', '⛓ Сделать подвижной');
+    const btn = el('button', 'work-cad-btn');
+    btn.appendChild(icon('joint'));
+    btn.appendChild(el('span', '', 'Сделать подвижной'));
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -298,7 +342,9 @@ function workCard(o) {
     body.appendChild(btn);
   }
   if (cadDraft || o.cad === true) {
-    const btn = el('button', 'work-cad-btn', cadDraft ? '📐 Открыть в конструкторе' : '📐 В конструктор');
+    const btn = el('button', 'work-cad-btn');
+    btn.appendChild(icon('ruler'));
+    btn.appendChild(el('span', '', cadDraft ? 'Открыть в конструкторе' : 'В конструктор'));
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -371,7 +417,12 @@ function renderDetail() {
   fillPreview(preview, o);
   const can3d = isStl(o) && hasFile(o);
   preview.classList.toggle('is-clickable', can3d);
-  if (can3d) preview.appendChild(el('div', 'badge-3d', '🧊 3D'));
+  if (can3d) {
+    const badge = el('div', 'badge-3d');
+    badge.appendChild(icon('rotate'));
+    badge.appendChild(el('span', '', '3D'));
+    preview.appendChild(badge);
+  }
 
   $('detail-title').textContent = o.title || 'Без названия';
 
@@ -400,13 +451,14 @@ function renderDetail() {
   $('detail-ask').hidden = !canAsk(o);
   // у деталей из конструктора и собранных на шарнирах редактор картинок не нужен
   $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad';
-  $('detail-again').hidden = k !== 'sketch' || !savedPrompt(o.id);
-  $('detail-again').textContent = withPrice('🔄 Другой вариант', 'sketch');
+  const saved = savedPrompt(o.id);
+  $('detail-again').hidden = k !== 'sketch' || !saved || !saved.prompt || (saved.kind && saved.kind !== 'sketch');
+  setLabel($('detail-again'), withPrice('Другой вариант', 'sketch'));
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
-  $('detail-reformat').textContent = '📦 Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно';
+  setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
   $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true;
-  $('detail-remodel').textContent = withPrice('🔁 Слепить заново', 'model');
+  setLabel($('detail-remodel'), withPrice('Слепить заново', 'model'));
 
   $('detail-sent').hidden = !(state.detailFresh && hasFile(o));
   $('detail-note').textContent = {
@@ -425,9 +477,9 @@ function renderDetail() {
 function detailMainText(o) {
   if (!o) return '';
   const k = kindOf(o);
-  if (k === 'sketch') return withPrice('✅ Лепим 3D-модель', 'model');
-  if (k === 'cad') return '📐 Открыть конструктор';
-  return hasFile(o) ? '📩 Прислать в чат' : '';
+  if (k === 'sketch') return withPrice('Лепим 3D-модель', 'model');
+  if (k === 'cad') return 'Открыть конструктор';
+  return hasFile(o) ? 'Прислать в чат' : '';
 }
 
 function onDetailMain() {
@@ -614,16 +666,18 @@ function renderBalance() {
   const packs = me.packs || [];
   const perCredit = (p) => p.stars / p.credits;
   const maxPer = Math.max.apply(null, packs.map(perCredit));
+  const minPer = Math.min.apply(null, packs.map(perCredit));
   const box = $('packs');
   box.textContent = '';
 
   packs.forEach((p) => {
-    const card = el('div', 'card pack');
+    const card = el('div', 'pack');
     const info = el('div', 'pack-info');
 
+    // Самый выгодный пакет: бейдж «выгодно» и единственная акцентная кнопка на экране.
+    const best = packs.length > 1 && perCredit(p) === minPer && (1 - minPer / maxPer) >= 0.05;
     const title = el('div', 'pack-title', p.credits + ' ' + plural(p.credits, 'кредит', 'кредита', 'кредитов'));
-    const saving = Math.round((1 - perCredit(p) / maxPer) * 100);
-    if (saving >= 5) title.appendChild(el('span', 'pack-badge', '−' + saving + '%'));
+    if (best) title.appendChild(el('span', 'pack-badge', 'выгодно'));
     info.appendChild(title);
 
     const price = el('div', 'pack-price');
@@ -631,7 +685,7 @@ function renderBalance() {
     price.appendChild(document.createTextNode(' · ' + formatNumber(perCredit(p)) + ' ⭐ за кредит'));
     info.appendChild(price);
 
-    const btn = el('button', 'btn btn-primary', 'Купить');
+    const btn = el('button', 'btn ' + (best || packs.length === 1 ? 'btn-primary' : 'btn-secondary'), 'Купить');
     btn.type = 'button';
     btn.addEventListener('click', () => buy(p, btn));
 
@@ -1011,7 +1065,10 @@ function bindEvents() {
   });
 
   // Плашка «первая 3D-модель в подарок» ведёт к 3D-фигурке.
-  $('gift').addEventListener('click', () => openOrder('3d'));
+  $('gift').addEventListener('click', () => {
+    haptic();
+    composerStart('3d');
+  });
 
   bindDetail();
 
@@ -1049,6 +1106,8 @@ function start() {
     return;
   }
   tg.ready();
+  paintChrome();
+  tg.onTheme(paintChrome);
 
   // Обычно открываемся на «✨ Создать». Ссылка с #editor (или startapp=editor) — сразу «Редактор»,
   // ?cad= и ?flexi= — конструктор и сборщик поверх «Моих работ».
