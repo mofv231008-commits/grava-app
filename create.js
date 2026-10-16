@@ -601,6 +601,8 @@ function resultActions(o) {
     out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
     if (o.editable !== false) out.push(pill('brush', 'Редактор', () => openOrderInEditor(o)));
   } else if (k === 'model') {
+    // сделана подвижной — главный следующий шаг: шарниры поставит приложение
+    if (flexiMain(o)) out.push(pill('joint', 'Сделать подвижной', () => openFlexi(o.id), 'is-main'));
     if (isStl(o) && hasFile(o)) {
       out.push(pill('rotate', 'Посмотреть в 3D', () => {
         openDetail(o);
@@ -660,6 +662,7 @@ function resultCard(o) {
   const actions = el('div', 'result-actions');
   resultActions(o).forEach((b) => actions.appendChild(b));
   card.appendChild(actions);
+  if (flexiMain(o)) card.appendChild(el('p', 'result-hint', 'Шарниры поставлю сам, около минуты'));
   msg.appendChild(card);
   return msg;
 }

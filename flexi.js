@@ -1,5 +1,7 @@
-/* Грава — экран «🦴 Шарниры», режим «⛓ Цепочка»: фигурка печатается сразу подвижной.
+/* Грава — экран «Шарниры»: фигурка печатается сразу подвижной.
    Каждая ветвь (лапы, хвост, щупальца, шея) — цепочка коротких звеньев.
+   Сценарий: приложение само ставит шарниры (точки автопоиска → проверка → красные убираются с понятной
+   причиной), само собирает и сразу показывает, как фигурка шевелится. Ручной редактор — по «Изменить шарниры».
    Считает фоновый поток flexi-worker.js; размеры суставов и порядок — из flexi-core.js (тот же код).
    Использует помощники из app.js и cadPost/cadBlobToDataUrl/cadIsAuth/cadMm из cad.js. */
 'use strict';
@@ -57,6 +59,12 @@ function openFlexi(id) {
     built: null,
     stale: true,
     prepTimer: 0,
+    mode: 'load',    // load | auto — шаги; fail — «Не получилось»; result — фигурка шевелится; editor — ручная правка
+    manual: false,   // шарниры правили руками — при смене размера они сохраняются, а не ставятся заново
+    missed: [],      // где шарнир не получился: { place, why } — для «Где не получилось»
+    verSeq: 0,       // версии разрезов — общий счётчик: старый ответ потока никогда не перепутается с новым
+    autoRun: 0,      // номер автосборки: «Назад», новый размер или ручная правка отменяют прежнюю
+    resultCuts: null, // шарниры собранного результата — «Назад» из редактора возвращает к нему
   };
 
   $('flexi-missing').hidden = true;
@@ -66,11 +74,11 @@ function openFlexi(id) {
   $('flexi-warn-parts').hidden = true;
   $('flexi-small-joints').hidden = true;
   $('flexi-pop').hidden = true;
-  $('flexi-status').hidden = false;
-  $('flexi-status-text').textContent = 'Загружаю модель…';
-  $('flexi-editor').hidden = true;
-  $('flexi-result').hidden = true;
   $('flexi-saved').hidden = true;
+  $('flexi-size-box').hidden = true;
+  $('flexi-size-btn').setAttribute('aria-expanded', 'false');
+  flexiShow(f, 'load');
+  flexiStep('load', 'Загружаю модель…');
   flexiRenderSettings();
   renderView();
   window.scrollTo(0, 0);
@@ -86,7 +94,11 @@ function openFlexi(id) {
       if (state.flexi !== f) return;
       f.data = data;
       $('flexi-title').textContent = data.title || 'Фигурка';
-      $('flexi-warn-pose').hidden = data.flexi !== false;
+      // сделана не в режиме «Подвижная на шарнирах» — может лежать не плашмя
+      const pose = $('flexi-warn-pose');
+      pose.hidden = data.flexi !== false;
+      pose.textContent = '';
+      if (data.flexi === false) pose.appendChild(flexiExplainEl(flexiExplain('поза', ''), ''));
       return flexiDownload(f);
     })
     .catch((err) => {
@@ -166,13 +178,16 @@ function flexiWorker(f) {
   w.onmessage = (e) => {
     const msg = e.data || {};
     if (msg.type === 'progress' && (msg.phase === 'repair' || msg.phase === 'analyze')) {
-      $('flexi-status-text').textContent = msg.phase === 'repair' ? 'Чиню модель…' : 'Смотрю, где гнётся…';
+      if (msg.phase === 'repair') flexiStep('load', 'Готовлю модель…');
+      else flexiStep('find', 'Ищу, где фигурка должна гнуться…');
       return;
     }
     if (msg.type === 'progress') {
-      $('busy-text').textContent = msg.phase === 'check'
+      const text = msg.phase === 'check'
         ? 'Проверяю звенья… ' + msg.k + ' из ' + msg.n
-        : 'Звено ' + msg.k + ' из ' + msg.n + '…';
+        : 'Собираю звено ' + msg.k + ' из ' + msg.n + '…';
+      if (f.mode === 'auto') flexiStep('build', text);
+      else $('busy-text').textContent = text;
       return;
     }
     const p = f.pending[msg.id];
@@ -245,22 +260,26 @@ async function flexiDownload(f) {
 /* ---------- Подготовка и предложения ---------- */
 
 async function flexiPrepare(f, first) {
-  $('flexi-status').hidden = false;
-  $('flexi-status-text').textContent = first ? 'Ищу суставы…' : 'Пересчитываю…';
+  if (first) flexiStep('load', 'Готовлю модель…');
+  else if (f.mode === 'editor') $('flexi-count').textContent = 'Пересчитываю под новый размер…';
+  else {
+    flexiShow(f, 'auto');
+    flexiStep('find', 'Пересчитываю под новый размер…');
+  }
   const oldLen = f.prep ? f.prep.length : f.length;
   let r;
   try {
     r = await flexiCall(f, { type: 'prepare', length: f.length, cut: f.cut });
   } catch (err) {
     if (state.flexi !== f || (err && err.code === 'cancelled')) return;
-    $('flexi-status-text').textContent = 'Не получилось подготовить модель: ' + ((err && err.message) || err);
+    flexiShowFail(f, 'Не получилось подготовить модель', [{ text: flexiCap((err && err.message) || String(err)), tip: 'Попробуй ещё раз или сделай модель заново' }]);
     return;
   }
   if (state.flexi !== f || r.length !== f.length) return; // уже двигают ползунок дальше
   const sk = r.skeleton;
   r.skel = [];
   for (let k = 0; k < sk.length / 5; k++) r.skel.push({ x: sk[k * 5], y: sk[k * 5 + 1], dt: sk[k * 5 + 2], parent: sk[k * 5 + 3], dist: sk[k * 5 + 4] });
-  f.prep = r;
+  f.prep = r; // r.geo — шея, тело, лапы, хвост для названий мест (flexiGeo)
   // ветви, по которым можно резать (позвоночник и лапы): разрез тянется вдоль них
   f.paths = new Map();
   r.branches.forEach((b) => {
@@ -287,11 +306,7 @@ async function flexiPrepare(f, first) {
     });
   }
   f.stale = true;
-  $('flexi-status').hidden = true;
-  $('flexi-editor').hidden = false;
-  flexiLayoutCanvas();
-  flexiDraw();
-  flexiUpdateMainButton();
+  flexiAfterPrepare(f);
 }
 
 // Предложения автопоиска (скелет, бороздки, корни ветвей) — только точки для «✨ Предложить», не разрезы.
@@ -315,7 +330,6 @@ function flexiInvalidate() {
   const f = state.flexi;
   if (!f) return;
   f.stale = true;
-  if (f.built) $('flexi-result-stale').hidden = false;
   flexiUpdateMainButton();
 }
 
@@ -346,20 +360,30 @@ function flexiPost(f, msg) {
 }
 
 // Новый разрез там, куда тапнули (или из точки-предложения). Пока поток не ответил — серый.
-function flexiAddCut(f, x, y, br, snap) {
+// auto — ставит автосборка: без вибрации и тостов, и это не ручная правка.
+function flexiAddCut(f, x, y, br, snap, auto) {
   const near = flexiNearestSkel(f, x, y);
   const s = near ? f.prep.skel[near.k] : { x, y };
   const c = {
     id: f.nextId++, P: [s.x, s.y], n: near ? flexiSkelDir(f, near.k) : [1, 0], w: 3, Rh: 0,
-    br, s: Infinity, chain: -1, spine: false, root: false, st: 'wait', why: '', ver: 0,
+    br, s: Infinity, chain: -1, spine: false, root: false, st: 'wait', why: '', ver: 0, auto: !!auto,
   };
   f.cuts.push(c);
   f.menu = null;
-  haptic('medium');
+  if (!auto) {
+    haptic('medium');
+    flexiManual(f);
+  }
   flexiInvalidate();
   flexiDraw();
   flexiPlace(f, c, x, y, br, snap, true);
   return c;
+}
+
+// Человек сам поправил шарниры: автосборка (если шла) больше не нужна, при смене размера они сохраняются.
+function flexiManual(f) {
+  f.manual = true;
+  f.autoRun++;
 }
 
 // Разрез ближе к телу на той же цепочке: проверяется вместе с этим (звено между ними — как при сборке).
@@ -383,9 +407,18 @@ function flexiRecheckChain(f, c, s0) {
    сначала быстро — по размерам сустава и запасу от кожи, потом булевыми операциями на целой модели (держит в 6 сторон,
    поворачивается, ничего не отрезал) — вместе с разрезом ближе к телу на той же цепочке. Сдвинули или убрали,
    пока считалось, — старый ответ не нужен (c.ver). cascade — разрез поставили или сдвинули рукой: разрезы дальше
-   по цепочке проверяются заново. */
-async function flexiPlace(f, c, x, y, br, snap, cascade) {
-  const ver = ++c.ver;
+   по цепочке проверяются заново.
+   Возвращает промис, который завершается, когда проверка закончилась (или стала ненужной): c.busy — последний
+   такой промис, c.placing — сколько проверок разреза ещё идёт. Автосборка ждёт их (flexiSettle). */
+function flexiPlace(f, c, x, y, br, snap, cascade) {
+  c.placing = (c.placing || 0) + 1;
+  const p = flexiPlaceRun(f, c, x, y, br, snap, cascade).finally(() => { c.placing--; });
+  c.busy = p;
+  return p;
+}
+
+async function flexiPlaceRun(f, c, x, y, br, snap, cascade) {
+  const ver = c.ver = ++f.verSeq;
   const oldS = c.s, oldChain = c.chain;
   c.st = 'wait';
   c.why = '';
@@ -402,7 +435,7 @@ async function flexiPlace(f, c, x, y, br, snap, cascade) {
   if (!r.cut) {
     // мимо шеи, лап и хвоста (середина круглого тела, фон)
     flexiDropCut(f, c);
-    toast('Тут не гнётся — тапни по шее, лапе или хвосту');
+    if (!c.auto) toast('Тут не гнётся — тапни по шее, лапе или хвосту');
     return;
   }
   Object.assign(c, r.cut);
@@ -427,7 +460,7 @@ async function flexiPlace(f, c, x, y, br, snap, cascade) {
 function flexiDropCut(f, c, cascade = true) {
   f.cuts = f.cuts.filter((x) => x !== c);
   if (f.menu === c.id) f.menu = null;
-  flexiPost(f, { type: 'drop', key: c.id, ver: ++c.ver });
+  flexiPost(f, { type: 'drop', key: c.id, ver: c.ver = ++f.verSeq });
   if (cascade && c.Rh > 0) flexiRecheckChain(f, c, c.s);
   flexiInvalidate();
   flexiDraw();
@@ -442,9 +475,9 @@ function flexiCutWhy(f, c) {
   const st = flexiCutState(f, c);
   return st === 'near' ? f.core.NEAR_WHY : st === 'bad' ? c.why : '';
 }
-// «Собрать STL» — когда есть хотя бы один разрез и все зелёные.
+// «Готово» — когда проверка закончилась и есть хотя бы один зелёный (красные при сборке пропускаются).
 function flexiCanBuild(f) {
-  return !!(f && f.prep && f.cuts.length && f.cuts.every((c) => flexiCutState(f, c) === 'ok'));
+  return !!(f && f.prep && !f.cuts.some((c) => c.st === 'wait') && f.cuts.some((c) => flexiCutState(f, c) === 'ok'));
 }
 
 /* ---------- Вид сверху ---------- */
@@ -579,7 +612,6 @@ function flexiDraw() {
     ctx.fillText(String(i + 1), px, py + 0.5);
   });
 
-  $('flexi-suggest').classList.toggle('is-active', !!f.showSugg);
   $('flexi-reset').disabled = !f.cuts.length;
   $('flexi-count').textContent = flexiChainInfo(f);
   flexiRenderCutNotes(f, order);
@@ -587,16 +619,16 @@ function flexiDraw() {
   $('flexi-build').disabled = !flexiCanBuild(f) || !!state.flexiBusy;
 }
 
-// Красные разрезы — короткая причина под видом сверху; пока поток проверяет — «Проверяю…».
+// Красные шарниры — понятная причина и совет под видом сверху (номер — как на картинке); пока поток проверяет — «Проверяю…».
 function flexiRenderCutNotes(f, order) {
   const box = $('flexi-cut-notes');
   box.textContent = '';
   order.forEach((c, i) => {
     const why = flexiCutWhy(f, c);
-    if (why) box.appendChild(el('div', 'flexi-note is-error', '✖ Разрез ' + (i + 1) + ': ' + why));
+    if (why) box.appendChild(flexiExplainEl(flexiExplain(why, flexiPlaceName(f, c)), 'is-bad', i + 1));
   });
   const wait = f.cuts.filter((c) => c.st === 'wait').length;
-  if (wait) box.appendChild(el('div', 'flexi-note is-ok', wait === 1 ? 'Проверяю разрез…' : 'Проверяю разрезы… (' + wait + ')'));
+  if (wait) box.appendChild(el('div', 'flexi-note is-ok', wait === 1 ? 'Проверяю шарнир…' : 'Проверяю шарниры… (' + wait + ')'));
 }
 
 // Маленькое меню у разреза — «Убрать» (причина красного — под видом сверху), над разрезом или под ним.
@@ -615,22 +647,190 @@ function flexiRenderMenu(f) {
   pop.style.top = Math.round(Math.max(4, top)) + 'px';
 }
 
-// «Позвоночник: 5 звеньев · лапы: 4 · гнётся до ±100°» или «8 ветвей · 24 звена · хвост гнётся до ±60°».
-function flexiChainInfo(f) {
-  if (!f.cuts.length) return 'Разрезов пока нет — фигурка целиком';
+// Что где стоит, простыми словами: { parts: «шея, 4 лапы, хвост — 4 звена», bend: 80 } — до скольких градусов
+// гнётся хвост (или тело, или самая длинная цепочка, если хвоста нет).
+function flexiCutsInfo(f, cuts) {
+  let neck = 0, body = 0, tail = 0;
+  const legs = new Set();
   const per = {};
-  f.cuts.forEach((c) => { per[c.chain] = (per[c.chain] || 0) + 1; });
-  // позвоночник — цепочка, в которой есть звенья позвоночника; остальные цепочки — лапы
-  const sc = f.cuts.find((c) => c.spine);
-  if (sc) {
-    const ns = per[sc.chain], legs = f.legs != null ? f.legs : Object.keys(per).length - 1;
-    return 'Позвоночник: ' + ns + ' ' + plural(ns, 'звено', 'звена', 'звеньев') + ' · лапы: ' + legs + ' · гнётся до ±' + ns * f.alphaSeg + '°';
+  cuts.forEach((c) => {
+    per[c.chain] = (per[c.chain] || 0) + 1;
+    const name = flexiPlaceName(f, c);
+    if (name === 'Шея') neck++;
+    else if (name === 'Тело') body++;
+    else if (name === 'Хвост' || name === 'Кончик хвоста') tail++;
+    else legs.add(name); // «Лапа 2» — одна лапа, даже если на ней несколько шарниров
+  });
+  const links = (k) => k + ' ' + plural(k, 'звено', 'звена', 'звеньев');
+  const parts = [];
+  if (neck) parts.push(neck > 1 ? 'шея — ' + links(neck) : 'шея');
+  if (body) parts.push(body > 1 ? 'тело — ' + links(body) : 'тело');
+  if (legs.size) parts.push(legs.size + ' ' + plural(legs.size, 'лапа', 'лапы', 'лап'));
+  if (tail) parts.push('хвост — ' + links(tail));
+  const longest = Math.max(0, ...Object.values(per));
+  return { parts: parts.join(', '), bend: (tail || neck + body || longest) * f.alphaSeg };
+}
+
+function flexiJoints(n) {
+  return n + ' ' + plural(n, 'шарнир', 'шарнира', 'шарниров');
+}
+
+// Строка в ручном редакторе: «Шарниров: 9 — шея, 4 лапы, хвост — 4 звена».
+function flexiChainInfo(f) {
+  if (!f.cuts.length) return 'Шарниров пока нет — фигурка целиком';
+  const info = flexiCutsInfo(f, f.cuts);
+  return 'Шарниров: ' + f.cuts.length + (info.parts ? ' — ' + info.parts : '');
+}
+
+/* ---------- Места и причины — понятными словами ---------- */
+
+const flexiCap = (s) => { s = String(s || '').trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; };
+
+// Где у фигурки шея, тело, хвост и какая лапа какая — по ветвям из подготовки (считается раз на размер).
+// Позвоночник идёт от морды к кончику хвоста: тело — между местами, где из него выходят передние и задние лапы.
+// Ветви лап начинаются в ядре, и одну лапу часто ведут несколько почти одинаковых ветвей — их объединяем
+// по концу лапы; место лапы на позвоночнике — по её выходу из тела (b.from).
+function flexiGeo(f) {
+  const prep = f.prep;
+  if (prep.geo) return prep.geo;
+  const geo = { spine: null, sFront: 0, sBack: 0, total: 0, legNo: new Map() };
+  const all = Array.from(f.paths.entries());
+  const sp = all.find(([, b]) => b.spine);
+  const nearestS = (b, x, y) => {
+    let kb = 0, bd = Infinity;
+    for (let k = 0; k < b.pts.length / 2; k++) {
+      const d = (b.pts[k * 2] - x) ** 2 + (b.pts[k * 2 + 1] - y) ** 2;
+      if (d < bd) { bd = d; kb = k; }
+    }
+    return { s: b.cum[kb], k: kb };
+  };
+  // ветви одной лапы: концы цепочкой ближе 14 мм друг к другу
+  const raw = all.filter(([, b]) => !b.spine).map(([i, b]) => {
+    const n = b.pts.length / 2, a = Math.min(n - 1, Math.max(0, b.from));
+    return { i, ax: b.pts[a * 2], ay: b.pts[a * 2 + 1], ex: b.pts[n * 2 - 2], ey: b.pts[n * 2 - 1], len: b.cum[n - 1] };
+  });
+  const root = raw.map((x, k) => k);
+  const find = (k) => (root[k] === k ? k : (root[k] = find(root[k])));
+  raw.forEach((x, k) => raw.forEach((y, m) => { if (m > k && Math.hypot(x.ex - y.ex, x.ey - y.ey) < 14) root[find(m)] = find(k); }));
+  const legs = [];
+  raw.forEach((x, k) => {
+    let leg = legs.find((q) => q.key === find(k));
+    if (!leg) legs.push(leg = { key: find(k), ids: [], len: -1 });
+    leg.ids.push(x.i);
+    if (x.len > leg.len) Object.assign(leg, { ax: x.ax, ay: x.ay, ex: x.ex, ey: x.ey, len: x.len }); // лапа — по самой длинной ветви
+  });
+  if (sp) {
+    const [si, sb] = sp;
+    geo.spine = si;
+    geo.total = sb.cum[sb.cum.length - 1];
+    legs.forEach((L) => {
+      const q = nearestS(sb, L.ax, L.ay);
+      const k2 = Math.min(sb.pts.length / 2 - 1, q.k + 1), k1 = Math.max(0, k2 - 1);
+      const dx = sb.pts[k2 * 2] - sb.pts[k1 * 2], dy = sb.pts[k2 * 2 + 1] - sb.pts[k1 * 2 + 1];
+      L.s = q.s;
+      L.side = dx * (L.ey - sb.pts[k1 * 2 + 1]) - dy * (L.ex - sb.pts[k1 * 2]) > 0 ? 0 : 1;
+    });
+    // передние раньше задних, в паре — сначала одна сторона, потом другая
+    legs.sort((a, b) => (Math.abs(a.s - b.s) > 6 ? a.s - b.s : a.side - b.side));
+    if (legs.length) {
+      geo.sFront = Math.min(...legs.map((x) => x.s));
+      geo.sBack = Math.max(...legs.map((x) => x.s));
+    } else {
+      // без лап (змея): тело — у ядра
+      const sc = nearestS(sb, prep.core[0], prep.core[1]).s;
+      geo.sFront = sc - geo.total * 0.1;
+      geo.sBack = sc + geo.total * 0.1;
+    }
+  } else if (legs.length <= 2 || f.legs <= 1) {
+    // без лап (змея, червяк; ядро тоже видит одну цепочку): длинная цепочка — тело, короткая (к морде) — шея
+    geo.body = true;
+    geo.neck = new Set();
+    if (legs.length === 2) (legs[0].len < legs[1].len ? legs[0] : legs[1]).ids.forEach((i) => geo.neck.add(i));
+  } else {
+    // без позвоночника (осьминог): лапы — по кругу от ядра
+    legs.forEach((L) => { L.a = Math.atan2(L.ey - prep.core[1], L.ex - prep.core[0]); });
+    legs.sort((a, b) => a.a - b.a);
   }
-  const counts = Object.values(per);
-  const longest = Math.max(...counts);
-  const nb = counts.length, nl = f.cuts.length;
-  return nb + ' ' + plural(nb, 'ветвь', 'ветви', 'ветвей') + ' · ' + nl + ' ' + plural(nl, 'звено', 'звена', 'звеньев') +
-    ' · ' + (nb === 1 ? 'гнётся' : 'хвост гнётся') + ' до ±' + longest * f.alphaSeg + '°';
+  if (!geo.body) legs.forEach((L, k) => L.ids.forEach((i) => geo.legNo.set(i, k + 1)));
+  prep.geo = geo;
+  return geo;
+}
+
+// «Шея», «Тело», «Хвост», «Кончик хвоста», «Лапа 1…4» — по ветви и месту разреза на ней.
+function flexiPlaceName(f, c) {
+  if (!f.prep || !f.paths || c.br == null || !f.paths.has(c.br)) return 'Шарнир';
+  const geo = flexiGeo(f);
+  if (geo.body) return geo.neck.has(c.br) ? 'Шея' : 'Тело';
+  if (c.br !== geo.spine) return 'Лапа' + (geo.legNo.has(c.br) ? ' ' + geo.legNo.get(c.br) : '');
+  const s = Number.isFinite(c.s) ? c.s : 0;
+  if (s < geo.sFront - 1) return 'Шея';
+  if (s <= geo.sBack + 1) return 'Тело';
+  return s > geo.sBack + (geo.total - geo.sBack) * 0.8 ? 'Кончик хвоста' : 'Хвост';
+}
+
+// Техническая причина из ядра (c.why, NEAR_WHY, заметки сборки) → { text, tip } для человека.
+// key и what — для объединения одинаковых причин в разных местах (flexiExplainAll).
+function flexiExplain(why, place) {
+  const w = String(why || '').toLowerCase();
+  const at = place || 'Здесь';
+  const f = state.flexi;
+  const say = (key, what, tip) => ({ key, what, text: at + ': ' + what, tip });
+  if (/поз|лёжа|лежа|плашмя/.test(w)) {
+    return { key: 'pose', text: 'Фигурка не лежит плашмя — шарниры могут не напечататься', tip: 'Лучше создать новую в режиме «Подвижная на шарнирах»' };
+  }
+  if (/наружу|отрезал|отрезает|задевает|кожу/.test(w)) return say('outside', 'шарнир вылезет наружу', 'Сдвинь шарнир ближе к середине лапы');
+  if (/близко к соседн/.test(w)) return say('near', 'шарниры стоят слишком близко', 'Поставь его чуть дальше от соседнего');
+  if (/тонк|не помещается|мало места|близко к кончику|крупнее/.test(w)) {
+    return say('thin', 'слишком тонкое для шарнира', f && f.length >= 180 ? 'Сделай фигурку ещё крупнее' : 'Сделай фигурку крупнее — от 18 см');
+  }
+  const raw = String(why || '').trim();
+  return { key: 'other:' + raw, what: raw, text: place ? place + ': ' + raw : flexiCap(raw), tip: '' };
+}
+
+// «Лапа 1», «Лапа 3», «Хвост» → «Хвост, лапы 1, 3».
+function flexiJoinPlaces(places) {
+  const leg = /^Лапа (\d+)$/;
+  const nums = places.filter((p) => leg.test(p)).map((p) => Number(p.match(leg)[1])).sort((a, b) => a - b);
+  const parts = places.filter((p) => !leg.test(p));
+  if (nums.length === 1) parts.push('Лапа ' + nums[0]);
+  else if (nums.length) parts.push('Лапы ' + nums.join(', '));
+  return parts.map((p, i) => (i ? p.charAt(0).toLowerCase() + p.slice(1) : p)).join(', ');
+}
+
+// Список мест и причин → строки объяснений: одна строка на место, одинаковые причины в разных местах — одной строкой.
+function flexiExplainAll(items) {
+  const groups = [];
+  const seen = new Set();
+  items.forEach((m) => {
+    if (seen.has(m.place)) return;
+    seen.add(m.place);
+    const x = flexiExplain(m.why, m.place);
+    const g = x.key !== 'pose' && groups.find((q) => q.x.key === x.key);
+    if (g) g.places.push(m.place);
+    else groups.push({ x, places: [m.place] });
+  });
+  return groups.map(({ x, places }) => {
+    if (places.length < 2 || !x.what) return { text: x.text, tip: x.tip };
+    const what = x.key === 'thin' ? 'слишком тонкие для шарнира' : x.what;
+    return { text: flexiJoinPlaces(places) + ': ' + what, tip: x.tip };
+  });
+}
+
+// Строка объяснения: жирным — что не так, ниже — совет; num — номер шарнира, как на картинке.
+function flexiExplainEl(x, cls, num) {
+  const d = el('div', 'flexi-explain' + (cls ? ' ' + cls : ''));
+  if (num) d.appendChild(el('span', 'flexi-num', String(num)));
+  const body = el('div', 'flexi-explain-body');
+  body.appendChild(el('b', '', x.text));
+  if (x.tip) body.appendChild(el('span', '', x.tip));
+  d.appendChild(body);
+  return d;
+}
+
+// «Где не получилось»: место, где в итоге есть зелёный шарнир, не считается.
+function flexiMissedLines(f) {
+  const okPlaces = new Set(f.cuts.filter((c) => flexiCutState(f, c) === 'ok').map((c) => flexiPlaceName(f, c)));
+  return flexiExplainAll(f.missed.filter((m) => !okPlaces.has(m.place)));
 }
 
 // Точки-предложения, на которых ещё нет разреза.
@@ -744,7 +944,8 @@ function flexiPointerMove(e) {
   const q = flexiAlong(f, c.br, ...flexiToModel(sx, sy));
   if (q) { c.P = q.P; c.n = q.n; }
   c.st = 'wait';
-  c.ver++; // старая проверка устарела
+  c.ver = ++f.verSeq; // старая проверка устарела
+  flexiManual(f);
   flexiInvalidate();
   flexiDraw();
 }
@@ -787,6 +988,7 @@ function flexiRemoveMenu() {
   const c = f && f.menu != null && f.cuts.find((x) => x.id === f.menu);
   if (!c) return;
   haptic();
+  flexiManual(f);
   flexiDropCut(f, c);
 }
 
@@ -794,26 +996,30 @@ function flexiReset() {
   const f = state.flexi;
   if (!f || !f.cuts.length) return;
   haptic();
+  flexiManual(f);
   f.cuts.slice().forEach((c) => flexiDropCut(f, c, false));
   f.menu = null;
   flexiDraw();
 }
 
+// «Поставить автоматически»: ручные правки сбрасываются, автосборка — заново.
 function flexiSuggestBtn() {
   const f = state.flexi;
-  if (!f || !f.prep) return;
+  if (!f || !f.prep || state.flexiBusy) return;
   haptic();
-  f.showSugg = !f.showSugg;
+  f.showSugg = false;
   f.menu = null;
-  if (f.showSugg && !f.sugg) flexiSuggest(f);
-  flexiDraw();
+  f.resultCuts = null;
+  flexiAuto(f);
 }
 
 /* ---------- Настройки на экране ---------- */
 
-// «Размер: 15 см» вверху экрана — длина фигурки, на которую рассчитаны суставы.
+// «Размер: 15 см» вверху экрана и на кнопке — длина фигурки, на которую рассчитаны суставы.
 function flexiShowDim(f) {
-  $('flexi-dim').textContent = 'Размер: ' + String(Math.round(f.length) / 10).replace('.', ',') + ' см';
+  const t = 'Размер: ' + String(Math.round(f.length) / 10).replace('.', ',') + ' см';
+  $('flexi-dim').textContent = t;
+  $('flexi-size-label').textContent = t;
 }
 
 function flexiRenderSettings() {
@@ -845,81 +1051,350 @@ function flexiOnLength() {
 function flexiSchedulePrepare() {
   const f = state.flexi;
   if (!f || !f.prep) return;
-  // суставы на новом размере другие: разрезы проверятся заново, когда модель пересчитается
-  f.cuts.forEach((c) => { c.ver++; c.st = 'wait'; c.why = ''; });
+  if (!f.manual) {
+    // поставленные автоматически — на новом размере ставятся заново
+    f.autoRun++;
+    f.cuts.slice().forEach((c) => flexiDropCut(f, c, false));
+  } else {
+    // ручные — сохраняются и едут вместе с моделью; проверятся заново, когда модель пересчитается
+    f.cuts.forEach((c) => { c.ver = ++f.verSeq; c.st = 'wait'; c.why = ''; });
+  }
+  f.resultCuts = null; // результат был на другом размере
   flexiInvalidate();
   flexiDraw();
   clearTimeout(f.prepTimer);
   f.prepTimer = setTimeout(() => flexiPrepare(f, false), 450);
 }
 
+// «Сделать крупнее» на экране «Не получилось»: +40 мм — и автосборка заново.
+function flexiBigger() {
+  const f = state.flexi;
+  if (!f || !f.prep || f.length >= 250) return;
+  haptic();
+  f.length = Math.min(250, f.length + 40);
+  f.manual = false;
+  flexiRenderSettings();
+  flexiSchedulePrepare();
+}
+
 /* ---------- Сборка ---------- */
 
+function flexiBuildCall(f) {
+  clearTimeout(f.prepTimer);
+  f.menu = null;
+  return flexiCall(f, { type: 'build', opts: flexiOpts(f), cuts: f.cuts.map(flexiCutMsg) });
+}
+
+function flexiBuildErrorText(err) {
+  return err && err.code === 'worker'
+    ? 'Сборщик не запустился на этом телефоне. Обнови Telegram и попробуй ещё раз'
+    : flexiCap((err && err.message) || String(err));
+}
+
+// Ошибки сборки — красными на своих шарнирах (ничего не пропускается молча). Возвращает их список.
+function flexiMarkBuildErrors(f, r) {
+  const errors = r.notes.filter((x) => x.level === 'error');
+  errors.forEach((x) => {
+    const c = x.id != null && f.cuts.find((q) => q.id === x.id);
+    if (c) { c.st = 'bad'; c.why = x.why; }
+  });
+  return errors;
+}
+
+// «Готово» в ручном редакторе: красные пропускаем (их причины — в «Где не получилось»), по зелёным собираем
+// и показываем, как шевелится. Не собралось — остаёмся в редакторе с красными шарнирами.
 async function flexiBuild() {
   const f = state.flexi;
   if (!f || !f.prep || state.flexiBusy) return;
   if (!flexiCanBuild(f)) {
-    toast(f.cuts.length ? 'Сначала сделай все разрезы зелёными' : 'Тапни по фигурке там, где она должна гнуться');
+    toast(f.cuts.some((c) => c.st === 'wait') ? 'Подожди, проверяю шарниры' : f.cuts.length ? 'Ни один шарнир не получился — поставь в другом месте' : 'Тапни по фигурке там, где она должна гнуться');
     return;
   }
   haptic();
-  clearTimeout(f.prepTimer);
+  flexiManual(f);
+  f.cuts.filter((c) => flexiCutState(f, c) !== 'ok').forEach((c) => {
+    flexiMiss(f, c, flexiCutWhy(f, c));
+    flexiDropCut(f, c, false);
+  });
   state.flexiBusy = true;
-  f.menu = null;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Готовлю звенья…';
+  $('busy-text').textContent = 'Собираю подвижную модель…';
   let r;
   try {
-    r = await flexiCall(f, { type: 'build', opts: flexiOpts(f), cuts: f.cuts.map(flexiCutMsg) });
+    r = await flexiBuildCall(f);
   } catch (err) {
     state.flexiBusy = false;
     $('busy').hidden = true;
     if (state.flexi !== f || (err && err.code === 'cancelled')) return;
     hapticNotify('error');
-    alertBox(err && err.code === 'worker'
-      ? 'Сборщик не запустился на этом телефоне. Обнови Telegram и попробуй ещё раз'
-      : 'Не получилось собрать: ' + ((err && err.message) || err));
+    alertBox('Не получилось собрать. ' + flexiBuildErrorText(err));
     return;
   }
   state.flexiBusy = false;
   $('busy').hidden = true;
   if (state.flexi !== f) return;
+  if (flexiMarkBuildErrors(f, r).length) {
+    flexiDraw();
+    hapticNotify('error');
+    toast('Не все шарниры получились — причина под картинкой');
+    return;
+  }
+  flexiShowResult(f, r);
+}
 
-  // разрез, который при сборке всё-таки не получился, — красный, с причиной (ничего не пропускается молча)
-  const errors = r.notes.filter((x) => x.level === 'error');
-  errors.forEach((x) => {
-    const c = x.id != null && f.cuts.find((q) => q.id === x.id);
-    if (c && c.st === 'ok') { c.st = 'bad'; c.why = x.why; }
+/* ---------- Автосборка: шарниры в лучших местах без единого тапа ---------- */
+
+const flexiSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Ждём, пока у всех разрезов закончится проверка (st не «wait»). onProgress(готово, всего) — для шага на экране.
+async function flexiSettle(f, onProgress) {
+  for (let i = 0; i < 2000; i++) {
+    if (state.flexi !== f) return false;
+    const waiting = f.cuts.filter((c) => c.st === 'wait');
+    if (onProgress) onProgress(f.cuts.length - waiting.length, f.cuts.length);
+    if (!waiting.length) return true;
+    // проверка потерялась (модель пересчитали) — ставим разрез заново
+    waiting.forEach((c) => { if (!c.placing) flexiPlace(f, c, c.P[0], c.P[1], c.br, false, false); });
+    await Promise.race(waiting.map((c) => c.busy).filter(Boolean).concat(flexiSleep(1500)));
+  }
+  return false;
+}
+
+// Где не получилось: место и причина — для «Где не получилось» и экрана «Не получилось».
+function flexiMiss(f, c, why) {
+  f.missed.push({ place: flexiPlaceName(f, c), why: why || c.why || flexiCutWhy(f, c) });
+}
+
+// Красные убрать (причины запомнить), из стоящих слишком близко оставить первый по порядку сборки.
+// Убрали разрез — следующие на той же цепочке проверяются заново, поэтому по кругу, пока всё не устоится.
+async function flexiPrune(f, alive, onProgress) {
+  for (let round = 0; round < 8; round++) {
+    if (!(await flexiSettle(f, onProgress)) || !alive()) return false;
+    const bad = f.cuts.filter((c) => c.st === 'bad');
+    if (bad.length) {
+      bad.forEach((c) => { flexiMiss(f, c, c.why); flexiDropCut(f, c); });
+      continue;
+    }
+    const kept = [];
+    const near = [];
+    flexiOrdered(f).forEach((c) => (kept.some((o) => f.core.tooClose(c, o)) ? near : kept).push(c));
+    if (!near.length) return true;
+    near.forEach((c) => flexiDropCut(f, c));
+  }
+  return alive();
+}
+
+// §2: точки автопоиска → каждую проверить → красные убрать → собрать → показать, как шевелится.
+// «Назад», новый размер или ручная правка увеличивают f.autoRun — тогда этот проход тихо заканчивается.
+async function flexiAuto(f) {
+  const run = ++f.autoRun;
+  const alive = () => state.flexi === f && f.autoRun === run;
+  f.manual = false;
+  f.missed = [];
+  f.built = null;
+  f.stale = true;
+  f.resultCuts = null;
+  $('flexi-saved').hidden = true;
+  flexiShow(f, 'auto');
+  flexiStep('find', 'Ищу, где фигурка должна гнуться…');
+  if (!f.sugg) await flexiSuggest(f);
+  if (!alive()) return;
+  f.cuts.slice().forEach((c) => flexiDropCut(f, c, false));
+  (f.sugg || []).forEach((q) => flexiAddCut(f, q.P[0], q.P[1], q.br, true, true));
+  const progress = (done, n) => { if (alive()) flexiStep('check', 'Проверяю шарниры… (' + done + ' из ' + n + ')'); };
+  if (!(await flexiPrune(f, alive, progress)) || !alive()) return;
+  if (!f.cuts.length) {
+    flexiShowFail(f);
+    return;
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    flexiStep('build', 'Собираю подвижную модель…');
+    let r;
+    try {
+      r = await flexiBuildCall(f);
+    } catch (err) {
+      if (!alive() || (err && err.code === 'cancelled')) return;
+      flexiShowFail(f, 'Не получилось собрать', [{ text: flexiBuildErrorText(err), tip: '' }]);
+      return;
+    }
+    if (!alive()) return;
+    const errors = r.notes.filter((x) => x.level === 'error');
+    if (!errors.length) {
+      flexiShowResult(f, r);
+      return;
+    }
+    if (attempt === 0) {
+      // эти шарниры при сборке не получились — убираем и собираем ещё раз
+      errors.forEach((x) => {
+        const c = x.id != null && f.cuts.find((q) => q.id === x.id);
+        if (c) { flexiMiss(f, c, x.why); flexiDropCut(f, c); }
+      });
+      if (!(await flexiPrune(f, alive, progress)) || !alive()) return;
+      if (!f.cuts.length) {
+        flexiShowFail(f);
+        return;
+      }
+      continue;
+    }
+    // и второй раз не собралось — показываем редактор с красными шарнирами
+    flexiMarkBuildErrors(f, r);
+    f.manual = true;
+    flexiShow(f, 'editor');
+    hapticNotify('error');
+    toast('Не все шарниры получились — причина под картинкой');
+  }
+}
+
+// После подготовки (открыли, поменяли размер): автосборка — или ручные шарниры на новом размере.
+async function flexiAfterPrepare(f) {
+  if (!f.manual) {
+    flexiAuto(f);
+    return;
+  }
+  if (f.mode === 'editor' || !f.cuts.length) {
+    flexiShow(f, 'editor');
+    return;
+  }
+  // ручные шарниры: проверить на новом размере, всё зелёное — собрать, иначе — в редактор
+  const run = ++f.autoRun;
+  const alive = () => state.flexi === f && f.autoRun === run;
+  flexiShow(f, 'auto');
+  const ok = await flexiSettle(f, (done, n) => { if (alive()) flexiStep('check', 'Проверяю шарниры… (' + done + ' из ' + n + ')'); });
+  if (!ok || !alive()) return;
+  if (!flexiCanBuild(f)) {
+    flexiShow(f, 'editor');
+    toast('На новом размере не все шарниры получились — причина под картинкой');
+    return;
+  }
+  flexiStep('build', 'Собираю подвижную модель…');
+  let r;
+  try {
+    r = await flexiBuildCall(f);
+  } catch (err) {
+    if (!alive() || (err && err.code === 'cancelled')) return;
+    flexiShowFail(f, 'Не получилось собрать', [{ text: flexiBuildErrorText(err), tip: '' }]);
+    return;
+  }
+  if (!alive()) return;
+  if (flexiMarkBuildErrors(f, r).length) {
+    flexiShow(f, 'editor');
+    toast('Не все шарниры получились — причина под картинкой');
+    return;
+  }
+  flexiShowResult(f, r);
+}
+
+/* ---------- Экраны: шаги, «Не получилось», результат, редактор ---------- */
+
+const FLEXI_STEPS = ['load', 'find', 'check', 'build'];
+
+function flexiStep(step, text) {
+  const i = FLEXI_STEPS.indexOf(step);
+  document.querySelectorAll('#flexi-steps li').forEach((li, k) => {
+    li.classList.toggle('is-done', k < i);
+    li.classList.toggle('is-now', k === i);
   });
-  f.built = Object.assign(r, { errors });
-  f.stale = false;
-  $('flexi-result').hidden = false;
-  $('flexi-result-stale').hidden = true;
-  flexiRenderResult(f);
-  flexiDraw();
-  f.previewReady = flexiShowPreview(f);
-  await f.previewReady;
+  if (text) $('flexi-status-text').textContent = text;
+}
+
+function flexiShow(f, mode) {
+  f.mode = mode;
+  const steps = mode === 'load' || mode === 'auto';
+  $('flexi-status').hidden = !steps;
+  $('flexi-fail').hidden = mode !== 'fail';
+  $('flexi-result').hidden = mode !== 'result';
+  $('flexi-editor').hidden = mode !== 'editor';
+  $('flexi-size-block').hidden = !(mode === 'result' || mode === 'editor');
+  $('flexi-print').hidden = mode !== 'result';
+  if (mode !== 'result') flexiSetWiggle(false);
+  if (mode === 'editor') {
+    flexiLayoutCanvas();
+    flexiDraw();
+  }
   flexiUpdateMainButton();
-  if (errors.length) hapticNotify('error');
-  else hapticNotify('success');
-  setTimeout(() => $('flexi-result').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+}
+
+// «Не получилось поставить шарниры»: почему — простыми словами, и что можно сделать.
+function flexiShowFail(f, title, lines) {
+  flexiShow(f, 'fail');
+  $('flexi-fail-title').textContent = title || 'Не получилось поставить шарниры';
+  const list = lines || flexiExplainAll(f.missed);
+  if (!list.length) {
+    list.push((f.sugg || []).length
+      ? { text: 'Шарниры не прошли проверку', tip: 'Сделай фигурку крупнее или поставь шарниры вручную' }
+      : { text: 'Не нашёл, где фигурка может гнуться', tip: 'Подвижными получаются фигурки с шеей, лапами и хвостом — ящерица, дракон, осьминог' });
+  }
+  if (f.data && f.data.flexi === false && !lines) list.unshift(flexiExplain('поза', ''));
+  const box = $('flexi-fail-why');
+  box.textContent = '';
+  list.forEach((x) => box.appendChild(flexiExplainEl(x, 'is-warn')));
+  $('flexi-bigger').hidden = f.length >= 250 || !f.prep;
+  hapticNotify('warning');
+  window.scrollTo(0, 0);
+}
+
+// Готово: большое превью сверху, фигурка сама шевелится; ниже — что сделано и где не получилось.
+function flexiShowResult(f, r) {
+  f.built = Object.assign(r, { errors: [] });
+  f.builtLength = f.length;
+  f.stale = false;
+  $('flexi-saved').hidden = true;
+  flexiShow(f, 'result');
+  flexiRenderResult(f);
+  f.previewReady = flexiShowPreview(f).then(() => {
+    if (state.flexi === f && f.mode === 'result') flexiSetWiggle(true);
+  });
+  hapticNotify('success');
+  window.scrollTo(0, 0);
 }
 
 function flexiRenderResult(f) {
   const b = f.built;
-  const sum = $('flexi-summary');
-  sum.className = 'flexi-summary ' + (b.errors.length ? 'is-bad' : 'is-ok');
-  sum.textContent = b.errors.length
-    ? '⚠ ' + b.errors.length + ' ' + plural(b.errors.length, 'проблема', 'проблемы', 'проблем') + ' — смотри ниже'
-    : b.summary;
-
-  const box = $('flexi-notes');
+  const info = flexiCutsInfo(f, f.cuts);
+  const n = f.cuts.length;
+  $('flexi-summary').textContent = (f.manual ? 'Шарниров: ' + n + (info.parts ? ' — ' : '') : 'Поставил ' + flexiJoints(n) + (info.parts ? ': ' : '')) +
+    info.parts + '. Гнётся до ±' + info.bend + '°';
+  $('flexi-parts').textContent = 'Файл STL · ' + cadMm(b.stl.byteLength / 1048576) + ' МБ';
+  // где не получилось + предупреждения сборки (жёлтым, это не ошибки)
+  const lines = flexiMissedLines(f);
+  b.notes.filter((x) => x.level === 'warn').forEach((x) => {
+    const c = x.id != null && f.cuts.find((q) => q.id === x.id);
+    lines.push(flexiExplain(String(x.text).replace(/^Разрез[^:]*:\s*/, ''), c ? flexiPlaceName(f, c) : ''));
+  });
+  const box = $('flexi-missed-list');
   box.textContent = '';
-  const add = (cls, text) => box.appendChild(el('div', 'flexi-note ' + cls, text));
-  b.errors.forEach((x) => add('is-error', '✖ ' + x.text));
-  b.notes.filter((x) => x.level === 'warn').forEach((x) => add('is-warn', '⚠ ' + x.text));
+  lines.forEach((x) => box.appendChild(flexiExplainEl(x, 'is-warn')));
+  $('flexi-missed').hidden = !lines.length;
+}
 
-  $('flexi-parts').textContent = 'Деталей: ' + b.parts.length + ' · звеньев: ' + b.joints.length + ' · ' + cadMm(b.stl.byteLength / 1048576) + ' МБ';
+// «Изменить шарниры»: ручной редактор с уже стоящими шарнирами. Шарниры результата запоминаем — для «Назад».
+function flexiOpenEditor() {
+  const f = state.flexi;
+  if (!f || !f.prep || state.flexiBusy) return;
+  haptic();
+  f.autoRun++;
+  f.resultCuts = f.built && !f.stale ? f.cuts.map((c) => Object.assign({}, c)) : null;
+  f.resultManual = f.manual;
+  f.menu = null;
+  flexiShow(f, 'editor');
+  window.scrollTo(0, 0);
+}
+
+// «Назад» в редакторе — к результату, правки шарниров не применяются. false — закрыть экран.
+function flexiBack() {
+  const f = state.flexi;
+  if (!f || f.mode !== 'editor' || !f.resultCuts || !f.built || f.builtLength !== f.length) return false;
+  if (f.stale) {
+    f.cuts.forEach((c) => flexiPost(f, { type: 'drop', key: c.id, ver: c.ver = ++f.verSeq }));
+    f.cuts = f.resultCuts.map((c) => Object.assign({}, c, { ver: ++f.verSeq, placing: 0, busy: null }));
+    f.manual = f.resultManual;
+    f.stale = false;
+  }
+  f.menu = null;
+  flexiShow(f, 'result');
+  flexiSetWiggle(true);
+  window.scrollTo(0, 0);
+  return true;
 }
 
 /* ---------- 3D-превью ---------- */
@@ -1000,6 +1475,8 @@ async function flexiShowPreview(f) {
   controls.minDistance = radius * 0.4;
   controls.maxDistance = radius * 12;
   controls.update();
+  // палец вверх-вниз по превью листает страницу (превью не дёргается), вбок — крутит фигурку, щипок — приближает
+  renderer.domElement.style.touchAction = 'pan-y';
 
   const resize = () => {
     const w = stage.clientWidth || 300, h = stage.clientHeight || 300;
@@ -1014,6 +1491,7 @@ async function flexiShowPreview(f) {
   }
   const loop = (now) => {
     flexiPrev.raf = requestAnimationFrame(loop);
+    if (state.flexi && state.flexi.mode !== 'result') return; // превью спрятано (редактор, шаги) — не рисуем
     if (flexiPrev.wiggle) {
       const t = (now - flexiPrev.t0) / 1000;
       // волна: каждое звено качается на ±α, дальние от тела — со сдвигом фазы
@@ -1025,7 +1503,7 @@ async function flexiShowPreview(f) {
   };
   flexiPrev.raf = requestAnimationFrame(loop);
   flexiPrev.v = { T, renderer, scene, camera, controls, geoms, mats, pivots, center, radius, dist, assembled, box };
-  flexiSetWiggle(false);
+  flexiSetWiggle(false); // шевелить начинает экран результата
 }
 
 function flexiGeometry(T, p) {
@@ -1042,7 +1520,7 @@ function flexiSetWiggle(on) {
   flexiPrev.wiggle = on;
   flexiPrev.t0 = performance.now();
   if (!on && flexiPrev.v) flexiPrev.v.pivots.forEach((p) => { p.pivot.rotation.z = 0; });
-  $('flexi-wiggle').textContent = on ? '⏸ Остановить' : '🦎 Пошевелить';
+  $('flexi-wiggle').textContent = on ? '⏸ Остановить' : '▶ Пошевелить';
 }
 
 function flexiDestroyPreview() {
@@ -1094,16 +1572,18 @@ function flexiReady(f) {
   return !!(f && f.built && !f.stale && !f.built.errors.length && f.built.joints.length);
 }
 
+// Главная кнопка Телеги — только на экране результата: «Сохранить подвижную модель».
+// Пока идёт автосборка, на «Не получилось» и в редакторе (там своя «Готово») — скрыта.
 function flexiUpdateMainButton() {
   const f = state.flexi;
   if (!f) return;
-  if (!f.prep) {
+  if (!f.prep || f.mode !== 'result') {
     tg.MainButton.hide();
     return;
   }
   const ready = flexiReady(f);
   tg.MainButton.setParams(Object.assign({
-    text: 'Сохранить STL',
+    text: 'Сохранить подвижную модель',
     is_visible: true,
     is_active: ready,
   }, mainButtonColors(ready)));
@@ -1112,11 +1592,7 @@ function flexiUpdateMainButton() {
 async function flexiExport() {
   const f = state.flexi;
   if (f && f.previewReady) await f.previewReady; // снимок делаем из превью
-  if (!flexiReady(f) || state.flexiBusy || !flexiPrev.v) {
-    if (f && f.built && f.stale) toast('Сначала пересобери — нажми «🔧 Собрать STL»');
-    else if (f && f.built && f.built.errors.length) toast('Есть красные ошибки — исправь их и пересобери');
-    return;
-  }
+  if (!flexiReady(f) || state.flexiBusy || !flexiPrev.v || f.mode !== 'result') return;
   haptic();
   const bytes = f.built.stl;
   if (bytes.byteLength > FLEXI_MAX_FILE) {
@@ -1175,6 +1651,24 @@ function bindFlexi() {
   $('flexi-suggest').addEventListener('click', flexiSuggestBtn);
   $('flexi-reset').addEventListener('click', flexiReset);
   $('flexi-length').addEventListener('input', flexiOnLength);
+  $('flexi-edit').addEventListener('click', flexiOpenEditor);
+  $('flexi-bigger').addEventListener('click', flexiBigger);
+  $('flexi-manual').addEventListener('click', () => {
+    const f = state.flexi;
+    if (!f || !f.prep) return;
+    haptic();
+    f.manual = true;
+    f.resultCuts = null;
+    flexiShow(f, 'editor');
+    window.scrollTo(0, 0);
+  });
+  $('flexi-size-btn').addEventListener('click', () => {
+    haptic();
+    const box = $('flexi-size-box');
+    box.hidden = !box.hidden;
+    $('flexi-size-btn').setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
+    if (!box.hidden) setTimeout(() => box.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 30);
+  });
 
   const withF = (fn) => (e) => { const f = state.flexi; if (f) fn(f, e); };
   document.querySelectorAll('#flexi-gap button').forEach((b) => b.addEventListener('click', withF((f) => {
@@ -1217,6 +1711,6 @@ function bindFlexi() {
 
 // Номер модели из ссылки: ?flexi=123 или #…&flexi=123.
 function flexiIdFromUrl() {
-  const m = (location.search + location.hash).match(/[?#&]flexi=(\d+)/);
+  const m = (location.search + location.hash).match(/[?#&]flexi=([\w-]+)/); // в ?mock=1 номера вида o14
   return m ? m[1] : null;
 }

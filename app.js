@@ -90,6 +90,10 @@ function isStl(o) { return isModel(o) && fileFormat(o) === 'STL'; }
 function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', laser: 'laser' }[kindOf(o)]; }
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 function canSend(o) { return isSketch(o) || hasFile(o); } // эскиз бот присылает картинкой, остальное — файлом
+// 3D-модель, которую можно сделать подвижной: не собранная уже на шарнирах и не деталь из конструктора.
+function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && hasFile(o); }
+// Сделана в режиме «Подвижная на шарнирах» — «Сделать подвижной» главным действием.
+function flexiMain(o) { return canFlexi(o) && o.flexi === true; }
 
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
@@ -347,7 +351,7 @@ function workCard(o, names) {
   });
   body.appendChild(line);
 
-  if (o.flexi === true) {
+  if (flexiMain(o)) {
     const btn = el('button', 'work-cad-btn');
     btn.appendChild(icon('joint'));
     btn.appendChild(el('span', '', 'На шарнирах')); // узкая карточка: коротко, в одну строку
@@ -458,7 +462,8 @@ function renderDetail() {
   });
 
   $('detail-3d').hidden = !can3d;
-  $('detail-flexi').hidden = o.flexi !== true;
+  // подвижная модель — главная кнопка; остальные 3D-модели — можно попробовать
+  $('detail-flexi').hidden = !canFlexi(o) || flexiMain(o);
   $('detail-cad').hidden = o.cad !== true; // у черновика детали конструктор — на главной кнопке
   $('detail-resize').hidden = k !== 'laser' || o.cad === true || !hasFile(o);
   if (o.size_mm) {
@@ -479,8 +484,8 @@ function renderDetail() {
   setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
   $('detail-sent').hidden = !state.detailFresh;
-  // у эскиза главная кнопка — «Сделать 3D-модель», «Отправить в Telegram» — рядом, вторичной
-  $('detail-send').hidden = k !== 'sketch' || !canSend(o);
+  // главная кнопка — не отправка (эскиз, подвижная модель) — «Отправить в Telegram» рядом, вторичной
+  $('detail-send').hidden = !canSend(o) || detailMainText(o) === 'Отправить в Telegram';
   $('detail-note').textContent = {
     sketch: isFlexiMode(o)
       ? 'Это эскиз фигурки на шарнирах. Если нравится — сделай из него 3D-модель, а потом нажми «Сделать подвижной (на шарнирах)». Если нет — измени описанием или попроси ещё вариант.'
@@ -499,6 +504,7 @@ function detailMainText(o) {
   const k = kindOf(o);
   if (k === 'sketch') return withPrice('Сделать 3D-модель', 'model');
   if (k === 'cad') return 'Открыть конструктор';
+  if (flexiMain(o)) return 'Сделать подвижной · бесплатно';
   return canSend(o) ? 'Отправить в Telegram' : '';
 }
 
@@ -508,6 +514,7 @@ function onDetailMain() {
   const k = kindOf(o);
   if (k === 'sketch') makeModel(o, state.detailFormat, true);
   else if (k === 'cad') openCad(o.id);
+  else if (flexiMain(o)) openFlexi(o.id);
   else if (canSend(o)) sendWork(o.id);
 }
 
@@ -531,7 +538,7 @@ function goBack() {
   haptic();
   if (state.viewer) closeViewer();
   else if (proj.drawer) closeDrawer();
-  else if (state.flexi) closeFlexi();
+  else if (state.flexi) { if (!flexiBack()) closeFlexi(); } // из редактора шарниров — к результату
   else if (state.cad) closeCad();
   else if (state.wait) closeWait();
   else if (state.order) closeOrder();

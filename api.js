@@ -196,11 +196,14 @@ function mockState() {
         // project: '' — старые работы, до проектов (в списке они в «Ранее»)
         orders: [
           { id: 'o5', kind: 'sketch', sketch: true, mode: '3d_flexi', '3d_flexi': true, title: 'Ящерица', date: day(0), has_preview: true, has_file: false, editable: true, project: '', prompt: 'Ящерица на шарнирах, лапы в стороны' },
-          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '' },
+          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false },
           { id: 'o3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', size_mm: 150, date: day(2), has_file: true, has_preview: true, editable: true, project: '', prompt: 'Волк воет на луну' },
           { id: 'o2', kind: 'cad', mode: 'cad', title: 'Пластина 50×30×3', date: day(3), has_file: false, has_preview: false, project: '', prompt: 'Пластина 50×30×3, два отверстия 5 мм' },
           { id: 'o12', kind: 'laser', mode: 'laser', title: 'Ключница-домик', size_mm: 200, date: day(4), has_file: true, has_preview: true, editable: true, project: 'p_demo1', prompt: 'добавь ещё два крючка' },
           { id: 'o11', kind: 'laser', mode: 'laser', title: 'Ключница-домик', size_mm: 200, date: day(4.1), has_file: true, has_preview: true, editable: true, project: 'p_demo1', prompt: 'Ключница в виде домика с крышей, 4 крючка' },
+          // подвижные: обычная ящерица — шарниры встанут сами; плоская — ни одному шарниру не хватит высоты
+          { id: 'o14', kind: 'model', mode: '3d_flexi', '3d_flexi': true, flexi: true, title: 'Ящерица', format: 'stl', size_mm: 150, date: day(5), has_file: true, has_preview: true, editable: true, project: 'p_demo2', prompt: 'Ящерица на шарнирах, лежит, хвост длинный' },
+          { id: 'o15', kind: 'model', mode: '3d_flexi', '3d_flexi': true, flexi: true, title: 'Плоская ящерица', format: 'stl', size_mm: 150, date: day(6), has_file: true, has_preview: true, editable: true, project: 'p_demo3', prompt: 'Плоская ящерица-брелок' },
         ],
       },
     };
@@ -223,6 +226,11 @@ async function mockGet(params) {
   // черновик из чата — только когда открыли как с кнопки бота: ?mock=1&draft=1
   if (params.a === 'chatdraft') return { ok: true, draft: db.chatdraft && /[?&]draft=1/.test(location.search) ? mockCopy(db.chatdraft) : null };
   if (params.a === 'job') return mockStatus(params.id);
+  if (params.a === 'flexi') {
+    const o = db.me.orders.find((x) => x.id === String(params.id));
+    if (!o || o.kind !== 'model') throw new ApiError('not_found');
+    return { ok: true, id: o.id, title: o.title, format: 'stl', flexi: o.flexi === true ? true : o.flexi === false ? false : undefined };
+  }
   if (params.a === 'send') return { ok: true };
   if (params.a === 'cad') {
     const o = db.me.orders.find((x) => x.id === params.id);
@@ -437,8 +445,73 @@ function mockCubeStl() {
   return buf;
 }
 
+// Ящерица для сборщика шарниров — одна поверхность по карте высот: тело, голова, 4 лапы и хвост, сужающийся
+// к кончику (кончику шарнира не хватит), снизу — плита, которую сборщик срежет сам (низ модели срезается на 1 мм).
+// Перекрывающиеся фигуры склеить нельзя (ядро считает объём по чётности пересечений), поэтому — карта высот.
+// flat — плоская, как брелок: ни одному шарниру не хватит высоты.
+const mockLizardCache = {};
+function mockLizardStl(flat) {
+  if (mockLizardCache[flat]) return mockLizardCache[flat];
+  const k = flat ? 0.15 : 1;
+  const ell = (a, b, c, cx, cy, cz) => (x, y) => {
+    const q = 1 - ((x - cx) / a) ** 2 - ((y - cy) / b) ** 2;
+    return q > 0 ? (cz + c * Math.sqrt(q)) * k : -Infinity;
+  };
+  const cap = (r1, x1, y1, z1, x2, y2, z2, r2) => (x, y) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
+    const r = r1 + (r2 - r1) * t, d2 = (x - x1 - dx * t) ** 2 + (y - y1 - dy * t) ** 2;
+    return d2 < r * r ? (z1 + (z2 - z1) * t + Math.sqrt(r * r - d2)) * k : -Infinity;
+  };
+  const prims = [ell(30, 14, 10, 0, 0, 7), ell(13, 9, 8, 42, 0, 6), cap(8, -26, 0, 7, -100, 0, 1.8, 1.8)];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) prims.push(cap(5.5, sx * 18, sy * 8, 4, sx * 24, sy * 34, 4, 5.5));
+  const OUT = -1.6, BOTTOM = -2, step = 1, x0 = -106, y0 = -44, nx = 164, ny = 88;
+  const H = new Float32Array((nx + 1) * (ny + 1));
+  for (let j = 0; j <= ny; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const x = x0 + i * step, y = y0 + j * step;
+      let h = -Infinity;
+      if (i > 0 && j > 0 && i < nx && j < ny) prims.forEach((p) => { h = Math.max(h, p(x, y)); });
+      H[j * (nx + 1) + i] = h > 0 ? h : OUT;
+    }
+  }
+  const tris = [];
+  const T = (i, j) => [x0 + i * step, y0 + j * step, H[j * (nx + 1) + i]];
+  const B = (i, j) => [x0 + i * step, y0 + j * step, BOTTOM];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      tris.push([T(i, j), T(i + 1, j), T(i + 1, j + 1)], [T(i, j), T(i + 1, j + 1), T(i, j + 1)]);
+    }
+  }
+  // край по кругу (против часовой сверху): стенки наружу и дно веером из центра
+  const ring = [];
+  for (let i = 0; i < nx; i++) ring.push([i, 0]);
+  for (let j = 0; j < ny; j++) ring.push([nx, j]);
+  for (let i = nx; i > 0; i--) ring.push([i, ny]);
+  for (let j = ny; j > 0; j--) ring.push([0, j]);
+  const C = [x0 + (nx * step) / 2, y0 + (ny * step) / 2, BOTTOM];
+  ring.forEach((a, n) => {
+    const b = ring[(n + 1) % ring.length];
+    tris.push([B(...a), B(...b), T(...b)], [B(...a), T(...b), T(...a)], [C, B(...b), B(...a)]);
+  });
+  const buf = new ArrayBuffer(84 + tris.length * 50);
+  const dv = new DataView(buf);
+  dv.setUint32(80, tris.length, true);
+  tris.forEach((t, n) => {
+    let o = 84 + n * 50 + 12;
+    t.forEach((v) => v.forEach((c) => { dv.setFloat32(o, c, true); o += 4; }));
+  });
+  mockLizardCache[flat] = buf;
+  return buf;
+}
+
 async function mockDownload(params) {
   await mockWait(300);
+  if (params.a === 'file' && params.what === 'file') {
+    // модель для сборщика шарниров
+    const o = mockState().me.orders.find((x) => x.id === String(params.id));
+    return new Response(mockLizardStl(!!(o && /плоск/i.test(o.title))).slice(0), { headers: { 'content-type': 'application/octet-stream' } });
+  }
   if (params.a === 'file' && params.what !== 'preview') {
     return new Response(mockCubeStl(), { headers: { 'content-type': 'application/octet-stream' } });
   }

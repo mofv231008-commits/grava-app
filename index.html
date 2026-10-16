@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=18">
+  <link rel="stylesheet" href="style.css?v=19">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -193,7 +193,7 @@
       <div class="detail-actions">
         <button class="btn btn-secondary btn-wide" id="detail-send" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span>Отправить в Telegram</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg><span>Посмотреть в 3D</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Сделать подвижной (на шарнирах)</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Попробовать на шарнирах</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Открыть конструктор</span></button>
         <div id="detail-resize" hidden>
           <button class="btn btn-secondary btn-wide" id="detail-resize-btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Другой размер</span></button>
@@ -258,7 +258,7 @@
     <!-- Сборщик шарниров -->
     <section id="view-flexi" class="view" hidden>
       <div id="flexi-missing" class="empty" hidden>
-        <div class="empty-emoji">🦴</div>
+        <div class="empty-icon"><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg></div>
         <p id="flexi-missing-text">Модель не найдена</p>
         <button class="btn btn-primary cad-missing-btn" id="flexi-missing-btn" type="button">К моим работам</button>
       </div>
@@ -267,37 +267,68 @@
         <h1 class="detail-title cad-title" id="flexi-title">Загружаю модель…</h1>
         <div class="detail-meta"><span>На шарнирах · печатается одной деталью</span><span id="flexi-dim">Размер: 15 см</span></div>
         <div class="flexi-warn" id="flexi-warn-parts" hidden></div>
-        <div class="flexi-warn" id="flexi-warn-pose" hidden>Эта модель не в позе лёжа — суставы могут не напечататься. Лучше создай новую фигурку в режиме «Подвижная на шарнирах»</div>
+        <div class="flexi-warn" id="flexi-warn-pose" hidden></div>
 
-        <div class="flexi-status" id="flexi-status">
-          <div class="spinner"></div>
-          <p id="flexi-status-text">Загружаю модель…</p>
+        <!-- Автосборка: шаги, без вида сверху -->
+        <div class="flexi-steps" id="flexi-status" role="status">
+          <ol class="flexi-step-list" id="flexi-steps">
+            <li data-step="load"><span class="flexi-step-mark"></span><span class="flexi-step-text">Загружаю модель</span></li>
+            <li data-step="find"><span class="flexi-step-mark"></span><span class="flexi-step-text">Ищу, где фигурка должна гнуться</span></li>
+            <li data-step="check"><span class="flexi-step-mark"></span><span class="flexi-step-text">Проверяю шарниры</span></li>
+            <li data-step="build"><span class="flexi-step-mark"></span><span class="flexi-step-text">Собираю подвижную модель</span></li>
+          </ol>
+          <p class="flexi-step-now" id="flexi-status-text">Загружаю модель…</p>
+          <p class="note flexi-step-note">Обычно это около минуты. Можно ничего не трогать</p>
         </div>
 
+        <!-- Не получилось поставить шарниры -->
+        <div class="flexi-fail" id="flexi-fail" hidden>
+          <h2 class="flexi-fail-title" id="flexi-fail-title">Не получилось поставить шарниры</h2>
+          <div class="flexi-explain-list" id="flexi-fail-why"></div>
+          <button type="button" class="btn btn-primary btn-wide" id="flexi-bigger">Сделать крупнее</button>
+          <button type="button" class="btn btn-secondary btn-wide" id="flexi-manual">Поставить вручную</button>
+        </div>
+
+        <!-- Результат: фигурка сама шевелится -->
+        <div id="flexi-result" hidden>
+          <div class="cad-preview flexi-3d" id="flexi-3d"></div>
+          <button type="button" class="btn btn-secondary btn-wide" id="flexi-wiggle">⏸ Остановить</button>
+          <p class="flexi-summary" id="flexi-summary"></p>
+          <p class="flexi-parts" id="flexi-parts"></p>
+          <div class="flexi-missed" id="flexi-missed" hidden>
+            <h2 class="flexi-missed-title">Где не получилось</h2>
+            <div class="flexi-explain-list" id="flexi-missed-list"></div>
+          </div>
+          <!-- после «Сохранить подвижную модель»: новая работа уже в «Моих работах» -->
+          <div class="saved" id="flexi-saved" role="status" hidden>
+            <p class="saved-title"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span>Сохранено в «Мои работы»</span></p>
+            <button class="btn btn-secondary btn-wide" type="button" data-act="open"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Открыть работу</span></button>
+            <button class="btn btn-secondary btn-wide" type="button" data-act="send"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span>Отправить в Telegram</span></button>
+          </div>
+          <button type="button" class="btn btn-secondary btn-wide flexi-edit" id="flexi-edit"><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Изменить шарниры</span></button>
+        </div>
+
+        <!-- Ручной редактор: только по «Изменить шарниры» -->
         <div id="flexi-editor" hidden>
-          <p class="flexi-lead" id="flexi-lead">Тапни по фигурке там, где она должна гнуться. Обычно это шея, основания лап и 2–4 места на хвосте</p>
+          <p class="flexi-lead" id="flexi-lead">Тапни, где добавить шарнир. Тап по шарниру — убрать. Зелёный — получится, красный — нет, причина ниже</p>
           <div class="flexi-top" id="flexi-top">
             <canvas id="flexi-canvas"></canvas>
             <div class="flexi-pop" id="flexi-pop" hidden>
-              <button type="button" class="btn btn-secondary" id="flexi-pop-remove">🗑 Убрать</button>
+              <button type="button" class="btn btn-secondary" id="flexi-pop-remove">Убрать</button>
             </div>
           </div>
-          <p class="flexi-size" id="flexi-small-joints" hidden>На таком размере суставы помещаются не везде. Сделай фигурку крупнее — от 18 см</p>
+          <p class="flexi-size" id="flexi-small-joints" hidden>На таком размере шарниры помещаются не везде. Сделай фигурку крупнее — от 18 см</p>
           <p class="flexi-count" id="flexi-count"></p>
-          <div class="flexi-cut-notes" id="flexi-cut-notes"></div>
+          <div class="flexi-explain-list flexi-cut-notes" id="flexi-cut-notes"></div>
           <div class="flexi-tools">
-            <button type="button" class="btn btn-secondary" id="flexi-suggest">✨ Предложить</button>
-            <button type="button" class="btn btn-secondary" id="flexi-reset" disabled>↺ Сбросить</button>
+            <button type="button" class="btn btn-secondary" id="flexi-suggest">Поставить автоматически</button>
+            <button type="button" class="btn btn-secondary" id="flexi-reset" disabled>Убрать все</button>
           </div>
-          <p class="ed-tip" id="flexi-tip">Зелёный разрез — сустав получится, красный — нет (причина под картинкой). Тяни разрез — он едет вдоль позвоночника. Тап по разрезу — «Убрать».</p>
+          <p class="ed-tip" id="flexi-tip">Шарнир можно потянуть — он едет вдоль шеи, лапы или хвоста.</p>
 
           <details class="flexi-settings">
-            <summary>Настройки</summary>
+            <summary>Тонкая настройка</summary>
             <div class="card cad-list">
-              <div class="cad-param">
-                <div class="cad-param-head"><label class="cad-param-label" for="flexi-length">Длина фигурки</label><b class="flexi-val" id="flexi-length-val">150 мм</b></div>
-                <input class="cad-slider" type="range" id="flexi-length" min="80" max="250" step="1" value="150">
-              </div>
               <div class="cad-param">
                 <div class="cad-param-head"><span class="cad-param-label">Зазор</span>
                   <div class="segmented flexi-seg" id="flexi-gap">
@@ -321,29 +352,26 @@
               </div>
             </div>
           </details>
-          <p class="flexi-size" id="flexi-size" hidden>Для подвижных лучше 15–20 см — звеньев будет больше</p>
 
-          <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build" disabled>🔧 Собрать STL</button>
-          <p class="note" id="flexi-hint">Печатай одним цветом, слой 0.2, 2–3 стенки, без поддержек. Сопло на 5° горячее обычного. Разминай, сгибая в стороны. Не меняй размер в программе для печати — шарниры рассчитаны на этот размер.</p>
-
-          <!-- после «Сохранить STL»: новая работа уже в «Моих работах» -->
-          <div class="saved" id="flexi-saved" role="status" hidden>
-            <p class="saved-title"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span>Сохранено в «Мои работы»</span></p>
-            <button class="btn btn-secondary btn-wide" type="button" data-act="open"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Открыть работу</span></button>
-            <button class="btn btn-secondary btn-wide" type="button" data-act="send"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span>Отправить в Telegram</span></button>
-          </div>
-
-          <div id="flexi-result" hidden>
-            <h2 class="section-title">Что получилось</h2>
-            <div class="flexi-summary" id="flexi-summary"></div>
-            <p class="flexi-stale" id="flexi-result-stale" hidden>Разрезы или настройки поменялись — нажми «🔧 Собрать STL» ещё раз</p>
-            <div class="cad-preview flexi-3d" id="flexi-3d"></div>
-            <p class="cad-dims" id="flexi-parts"></p>
-            <button type="button" class="btn btn-secondary btn-wide" id="flexi-wiggle">🦎 Пошевелить</button>
-            <div class="flexi-notes" id="flexi-notes"></div>
-          </div>
-
+          <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build" disabled>Готово</button>
         </div>
+
+        <!-- Размер — и у результата, и в редакторе -->
+        <div class="flexi-size-block" id="flexi-size-block" hidden>
+          <button type="button" class="btn btn-secondary btn-wide" id="flexi-size-btn" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span id="flexi-size-label">Размер: 15 см</span></button>
+          <div class="card cad-list flexi-size-box" id="flexi-size-box" hidden>
+            <div class="cad-param">
+              <div class="cad-param-head"><label class="cad-param-label" for="flexi-length">Длина фигурки</label><b class="flexi-val" id="flexi-length-val">150 мм</b></div>
+              <input class="cad-slider" type="range" id="flexi-length" min="80" max="250" step="1" value="150">
+            </div>
+            <p class="flexi-size" id="flexi-size" hidden>Для подвижных лучше 15–20 см — звеньев будет больше</p>
+          </div>
+        </div>
+
+        <details class="flexi-print" id="flexi-print" hidden>
+          <summary>Как печатать</summary>
+          <p class="note" id="flexi-hint">Печатай одним цветом, слой 0.2, 2–3 стенки, без поддержек. Сопло на 5° горячее обычного. Разминай, сгибая в стороны. Не меняй размер в программе для печати — шарниры рассчитаны на этот размер.</p>
+        </details>
       </div>
     </section>
 
@@ -552,14 +580,14 @@
     </div>
   </div>
 
-  <script src="api.js?v=6"></script>
-  <script src="app.js?v=14"></script>
+  <script src="api.js?v=7"></script>
+  <script src="app.js?v=15"></script>
   <script src="jobs.js?v=5"></script>
-  <script src="create.js?v=6"></script>
+  <script src="create.js?v=7"></script>
   <script src="projects.js?v=1"></script>
   <script src="ask.js?v=1"></script>
   <script src="editor.js?v=10"></script>
   <script src="cad.js?v=5"></script>
-  <script src="flexi.js?v=16"></script>
+  <script src="flexi.js?v=17"></script>
 </body>
 </html>
