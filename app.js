@@ -318,7 +318,7 @@ function workCard(o) {
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
   if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', 'на шарнирах'));
-  else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? 'эскиз · подвижная' : 'эскиз'));
+  else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? 'эскиз · на шарнирах' : 'эскиз'));
   card.appendChild(thumb);
 
   const body = el('div', 'work-body');
@@ -333,7 +333,7 @@ function workCard(o) {
   if (o.flexi === true) {
     const btn = el('button', 'work-cad-btn');
     btn.appendChild(icon('joint'));
-    btn.appendChild(el('span', '', 'Сделать подвижной'));
+    btn.appendChild(el('span', '', 'На шарнирах')); // узкая карточка: коротко, в одну строку
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -344,7 +344,7 @@ function workCard(o) {
   if (cadDraft || o.cad === true) {
     const btn = el('button', 'work-cad-btn');
     btn.appendChild(icon('ruler'));
-    btn.appendChild(el('span', '', cadDraft ? 'Открыть в конструкторе' : 'В конструктор'));
+    btn.appendChild(el('span', '', 'Конструктор'));
     btn.type = 'button';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -429,11 +429,11 @@ function renderDetail() {
   const meta = $('detail-meta');
   meta.textContent = '';
   const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж для лазера', cad: 'Деталь по размерам' }[k];
-  [kindName, k === 'sketch' ? (isFlexiMode(o) ? '🦎 подвижная' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
+  [kindName, k === 'sketch' ? (isFlexiMode(o) ? 'на шарнирах' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
     .filter(Boolean)
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
-  // Эскиз: перед «Лепим» — выбор формата модели.
+  // Эскиз: перед «Сделать 3D-модель» — выбор формата модели.
   $('detail-format').hidden = k !== 'sketch';
   document.querySelectorAll('#detail-format button').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.v === state.detailFormat);
@@ -453,23 +453,23 @@ function renderDetail() {
   $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad';
   const saved = savedPrompt(o.id);
   $('detail-again').hidden = k !== 'sketch' || !saved || !saved.prompt || (saved.kind && saved.kind !== 'sketch');
-  setLabel($('detail-again'), withPrice('Другой вариант', 'sketch'));
+  setLabel($('detail-again'), withPrice('Ещё вариант', 'sketch'));
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
   setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
   $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true;
-  setLabel($('detail-remodel'), withPrice('Слепить заново', 'model'));
+  setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
   $('detail-sent').hidden = !(state.detailFresh && hasFile(o));
   $('detail-note').textContent = {
     sketch: isFlexiMode(o)
-      ? 'Это эскиз подвижной фигурки. Нравится — лепим модель, потом «⛓ Сделать подвижной». Нет — поправь словами или нарисуй другой вариант.'
-      : 'Это эскиз. Нравится — лепим из него 3D-модель. Нет — поправь словами или нарисуй другой вариант.',
-    cad: 'Размеры меняются в конструкторе — бесплатно. Поменять форму (отверстие, паз, надпись) — «✏️ Поправить словами».',
+      ? 'Это эскиз фигурки на шарнирах. Если нравится — сделай из него 3D-модель, а потом нажми «Сделать подвижной (на шарнирах)». Если нет — измени описанием или попроси ещё вариант.'
+      : 'Это эскиз. Если нравится — сделай из него 3D-модель. Если нет — измени описанием или попроси ещё вариант.',
+    cad: 'Размеры меняются в конструкторе бесплатно. Чтобы изменить форму (отверстие, паз, надпись), нажми «Изменить описанием».',
     laser: 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.',
     model: isStl(o)
-      ? 'Файл STL открой в слайсере (Bambu Studio, PrusaSlicer, Cura) — и можно печатать.'
-      : '3MF в браузере не показываем — пришлю файл в чат, открой его в слайсере (Bambu Studio, PrusaSlicer, Cura).',
+      ? 'Файл STL открой в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura) — и можно печатать.'
+      : 'Файл 3MF здесь не показывается — отправь его в Telegram и открой в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura).',
   }[k];
 }
 
@@ -477,9 +477,9 @@ function renderDetail() {
 function detailMainText(o) {
   if (!o) return '';
   const k = kindOf(o);
-  if (k === 'sketch') return withPrice('Лепим 3D-модель', 'model');
+  if (k === 'sketch') return withPrice('Сделать 3D-модель', 'model');
   if (k === 'cad') return 'Открыть конструктор';
-  return hasFile(o) ? 'Прислать в чат' : '';
+  return hasFile(o) ? 'Отправить в Telegram' : '';
 }
 
 function onDetailMain() {
@@ -491,7 +491,7 @@ function onDetailMain() {
   else sendToChat();
 }
 
-// Эскиз → модель или «Слепить заново» из модели. flexi — если фигурка подвижная.
+// Эскиз → модель или «Сделать модель заново» из модели. flexi — если фигурка подвижная.
 function makeModel(o, format, fromMain) {
   haptic();
   const data = { kind: 'model', base_order: o.id, format: format || 'stl', title: o.title || '' };
@@ -582,7 +582,7 @@ function bindDetail() {
     if (!o) return;
     haptic();
     const price = jobPrice('model');
-    confirmBox('Слепить модель заново' + (price ? ' (' + price + ')' : '') + '?', (ok) => {
+    confirmBox('Сделать модель заново' + (price ? ' (' + price + ')' : '') + '?', (ok) => {
       if (ok && state.detail === o) makeModel(o, String(o.format || 'stl').toLowerCase(), false);
     });
   });
@@ -616,7 +616,7 @@ async function sendToChat() {
   try {
     await Api.send(o.id);
     hapticNotify('success');
-    toast('Отправил в чат 👌');
+    toast('Отправлено в Telegram');
   } catch (err) {
     handleActionError(err, 'Не получилось отправить файл');
   } finally {
@@ -633,10 +633,9 @@ function renderBalance() {
   const prices = me.prices || {};
 
   $('bal-value').textContent = formatNumber(balance);
-  $('bal-unit').textContent = plural(balance, 'кредит', 'кредита', 'кредитов');
-  $('bal-free').textContent = 'Сегодня бесплатно ещё: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0);
-  $('price-image').textContent = (prices.image != null ? prices.image : 1) + ' кр.';
-  $('price-model').textContent = (prices.model != null ? prices.model : 4) + ' кр.';
+  $('bal-free').textContent = 'Бесплатно сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0);
+  $('price-image').textContent = credits(prices.image != null ? prices.image : 1);
+  $('price-model').textContent = credits(prices.model != null ? prices.model : 4);
 
   // Первая 3D-модель в подарок. В старых ответах API поля free_3d нет — тогда ничего не показываем.
   const free3d = me.free_3d === true;
@@ -647,19 +646,19 @@ function renderBalance() {
   const cadPrice = prices.cad;
   $('price-cad-row').hidden = cadPrice == null;
   if (cadPrice != null) {
-    $('price-cad').textContent = cadPrice + ' кр.';
+    $('price-cad').textContent = credits(cadPrice);
     $('price-cad-note').hidden = me.free_cad !== true;
-    $('price-cad-edit').textContent = prices.cad_edit != null ? 'правка словами — ' + prices.cad_edit + ' кр.' : '';
+    $('price-cad-edit').textContent = prices.cad_edit != null ? 'изменение описанием — ' + credits(prices.cad_edit) : '';
     $('price-cad-edit').hidden = prices.cad_edit == null;
   }
 
   // Поштучно оплаченные 3D-модели. Нет поля или 0 — строку не показываем.
   const modelsLeft = Number(me.models_left) || 0;
-  $('bal-models').textContent = '🧊 Оплаченных 3D-моделей: ' + formatNumber(modelsLeft);
+  $('bal-models').textContent = 'Оплаченных 3D-моделей: ' + formatNumber(modelsLeft);
   $('bal-models').hidden = modelsLeft <= 0;
 
   document.querySelectorAll('.balance-chip').forEach((chip) => {
-    chip.textContent = 'Баланс: ' + formatNumber(balance) + ' кр.';
+    chip.textContent = 'Баланс: ' + credits(balance);
     chip.hidden = false;
   });
 
@@ -676,14 +675,11 @@ function renderBalance() {
 
     // Самый выгодный пакет: бейдж «выгодно» и единственная акцентная кнопка на экране.
     const best = packs.length > 1 && perCredit(p) === minPer && (1 - minPer / maxPer) >= 0.05;
-    const title = el('div', 'pack-title', p.credits + ' ' + plural(p.credits, 'кредит', 'кредита', 'кредитов'));
+    // «10 кредитов — 200 ⭐»
+    const title = el('div', 'pack-title', credits(p.credits) + ' — ' + formatNumber(p.stars) + ' ⭐');
     if (best) title.appendChild(el('span', 'pack-badge', 'выгодно'));
     info.appendChild(title);
-
-    const price = el('div', 'pack-price');
-    price.appendChild(el('b', '', formatNumber(p.stars) + ' ⭐'));
-    price.appendChild(document.createTextNode(' · ' + formatNumber(perCredit(p)) + ' ⭐ за кредит'));
-    info.appendChild(price);
+    info.appendChild(el('div', 'pack-price', formatNumber(perCredit(p)) + ' ⭐ за кредит'));
 
     const btn = el('button', 'btn ' + (best || packs.length === 1 ? 'btn-primary' : 'btn-secondary'), 'Купить');
     btn.type = 'button';
@@ -699,7 +695,7 @@ function renderBalance() {
   if (one && one.id && Number(one.stars) > 0) {
     const card = el('div', 'pack pack-single');
     const info = el('div', 'pack-info');
-    info.appendChild(el('div', 'pack-title', '🧊 Одна 3D-модель\u00a0—\u00a0' + formatNumber(one.stars) + '\u00a0⭐'));
+    info.appendChild(el('div', 'pack-title', 'Одна 3D-модель\u00a0—\u00a0' + formatNumber(one.stars) + '\u00a0⭐'));
     info.appendChild(el('div', 'pack-price', 'Без пакета. В пакете 10 кредитов модель выходит дешевле'));
 
     const btn = el('button', 'btn btn-secondary', 'Купить');

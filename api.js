@@ -135,7 +135,7 @@ const Api = {
     return res;
   },
 
-  // Редактор картинок: правка нейронкой или «как есть».
+  // Редактор картинок: изменение по описанию или «как есть».
   edit: (params, timeoutMs) => postForm(EDIT_API, params, timeoutMs),
 
   // Конструктор деталей и сборщик шарниров: файл в чат, починка, «открыта эта деталь».
@@ -269,11 +269,11 @@ function mockStatus(id) {
 
   const prompt = String(d.prompt || '').toLowerCase();
   if (prompt.indexOf('ошибк') !== -1) {
-    j.result = Object.assign(base, { status: 'error', text: 'Нейронка не справилась. Кредиты вернул — попробуй ещё раз.' });
+    j.result = Object.assign(base, { status: 'error', text: 'Не получилось: по этому описанию не удалось нарисовать картинку.\nЧто сделать: опиши подробнее и попробуй ещё раз. Кредиты не списались.' });
   } else if (prompt.indexOf('вопрос') !== -1) {
-    j.result = Object.assign(base, { status: 'reply', text: 'Уточни, пожалуйста: какого размера нужна деталь?' });
+    j.result = Object.assign(base, { status: 'reply', text: 'Не получилось: непонятно, какого размера нужна деталь.\nЧто сделать: напиши размеры в миллиметрах.' });
   } else if (prompt.indexOf('кредит') !== -1 || !mockCharge(db.me, d.kind)) {
-    j.result = Object.assign(base, { status: 'no_credits', text: 'Не хватает кредитов. Пополни баланс — и я сразу начну.' });
+    j.result = Object.assign(base, { status: 'no_credits', text: 'Не получилось: недостаточно кредитов.\nЧто сделать: пополни баланс и попробуй ещё раз.' });
   } else {
     const order = mockOrder(db, d);
     db.me.orders.unshift(order);
@@ -292,7 +292,7 @@ function mockOrder(db, d) {
   const o = {
     id: 'o' + (++db.seq),
     kind,
-    title: d.title || (from && from.title) || (d.kind === 'scan' ? 'Скан по фото' : 'Новая работа'),
+    title: d.title || (from && from.title) || (d.kind === 'scan' ? '3D по фото предмета' : 'Новая работа'),
     date: new Date().toISOString(),
     has_preview: kind !== 'cad',
     has_file: kind === 'laser' || kind === 'model',
@@ -359,7 +359,7 @@ function mockDraftPhotoUrl(i) {
   return mockDraftPhotoCache[i];
 }
 
-// Кубик 40 мм в двоичном STL — чтобы «Покрутить в 3D» было что крутить.
+// Кубик 40 мм в двоичном STL — чтобы «Посмотреть в 3D» было что крутить.
 function mockCubeStl() {
   const v = [[0, 0, 0], [40, 0, 0], [40, 40, 0], [0, 40, 0], [0, 0, 40], [40, 0, 40], [40, 40, 40], [0, 40, 40]];
   const f = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];

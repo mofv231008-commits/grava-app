@@ -17,7 +17,7 @@ const JOB_KINDS = {
   sketch_photo: { group: 'sketch', price: 'image' },
   sketch_edit: { group: 'sketch', price: 'image' },
   model: { group: 'model', price: 'model' },
-  model_format: { group: 'model', price: 'free', verb: 'Готовлю', stages: [[0, 'Пересохраняю модель в другом формате…']] },
+  model_format: { group: 'model', price: 'free', verb: 'Готовлю', stages: [[0, 'Сохраняю модель в другом формате…']] },
   scan: { group: 'model', price: 'model' },
   cad: { group: 'cad', price: 'cad' },
   cad_edit: { group: 'cad', price: 'cad_edit' },
@@ -25,10 +25,10 @@ const JOB_KINDS = {
 
 // Этапы — по таймеру, сервер про них не знает. T — характерное время для полоски, сек.
 const JOB_GROUPS = {
-  sketch: { icon: 'pencil', verb: 'Рисую', eta: 'Обычно 30–60 секунд', T: 40, stages: [[0, 'Рисую эскиз…'], [25, 'Дорисовываю детали…']] },
-  laser: { icon: 'laser', verb: 'Рисую', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Рисую…'], [30, 'Перевожу в контуры для лазера…']] },
-  model: { icon: 'cube', verb: 'Леплю', eta: 'Обычно 2–5 минут', T: 170, stages: [[0, 'Леплю 3D-модель…'], [90, 'Чиню сетку для печати…'], [180, 'Почти готово…']] },
-  cad: { icon: 'ruler', verb: 'Черчу', eta: 'Обычно около минуты', T: 50, stages: [[0, 'Черчу деталь…']] },
+  sketch: { icon: 'pencil', verb: 'Рисую', eta: 'Обычно это занимает 1–3 минуты', T: 40, stages: [[0, 'Рисую эскиз…'], [25, 'Дорисовываю детали…']] },
+  laser: { icon: 'laser', verb: 'Рисую', eta: 'Обычно это занимает 1–3 минуты', T: 50, stages: [[0, 'Рисую чертёж…'], [30, 'Готовлю файл для лазера…']] },
+  model: { icon: 'cube', verb: 'Создаю', eta: 'Обычно это занимает 2–5 минут', T: 170, stages: [[0, 'Создаю 3D-модель…'], [90, 'Проверяю модель для печати…'], [180, 'Почти готово…']] },
+  cad: { icon: 'ruler', verb: 'Создаю', eta: 'Обычно это занимает 1–3 минуты', T: 50, stages: [[0, 'Создаю деталь…']] },
 };
 
 const JOB_ERRORS = {
@@ -51,14 +51,23 @@ const jobFind = (id) => jobs.list.find((j) => j.id === id) || null;
 
 /* ---------- Цены — только из ?a=me ---------- */
 
+// «1 кредит», «2 кредита», «5 кредитов» — словом, с правильным окончанием.
 function credits(n) {
-  return formatNumber(n) + ' кр.';
+  return formatNumber(n) + ' ' + plural(Number(n), 'кредит', 'кредита', 'кредитов');
 }
 
-// Цена одного заказа: «1 кр.», «бесплатно», «🎁 бесплатно», «из оплаченных». Нет цены в ответе — ''.
+// Первая модель или деталь в подарок.
+function isGift(kind) {
+  const me = state.me || {};
+  const price = (JOB_KINDS[kind] || {}).price;
+  return (price === 'model' && me.free_3d === true) || (price === 'cad' && me.free_cad === true);
+}
+
+// Цена одного заказа: «1 кредит», «бесплатно», «оплачено» (модель из купленных). Нет цены в ответе — ''.
 function jobPrice(kind) {
   const me = state.me || {};
   const p = me.prices || {};
+  if (isGift(kind)) return 'бесплатно';
   switch ((JOB_KINDS[kind] || {}).price) {
     case 'free':
       return 'бесплатно';
@@ -66,11 +75,9 @@ function jobPrice(kind) {
       if (Number(me.free_left) > 0) return 'бесплатно';
       return p.image != null ? credits(p.image) : '';
     case 'model':
-      if (me.free_3d === true) return '🎁 бесплатно';
-      if (Number(me.models_left) > 0) return 'из оплаченных';
+      if (Number(me.models_left) > 0) return 'оплачено';
       return p.model != null ? credits(p.model) : '';
     case 'cad':
-      if (me.free_cad === true) return '🎁 бесплатно';
       return p.cad != null ? credits(p.cad) : '';
     case 'cad_edit':
       return p.cad_edit != null ? credits(p.cad_edit) : '';
@@ -229,9 +236,9 @@ function jobCreateError(err) {
 function noCreditsPopup(text) {
   hapticNotify('error');
   tg.popup({
-    title: 'Не хватает кредитов',
-    message: text || 'Пополни баланс — и попробуй ещё раз.',
-    buttons: [{ id: 'balance', type: 'default', text: 'Пополнить' }, { type: 'cancel' }],
+    title: 'Недостаточно кредитов',
+    message: text || 'Пополни баланс и попробуй ещё раз.',
+    buttons: [{ id: 'balance', type: 'default', text: 'Пополнить баланс' }, { type: 'cancel' }],
   }, (id) => {
     if (id === 'balance') goToBalance();
   });
@@ -324,9 +331,9 @@ function jobFinish(j, r) {
   loadMe(false);
   hapticNotify(r.status === 'reply' ? 'warning' : 'error');
   if (state.wait === j.id) renderWait();
-  else if (r.status === 'no_credits') toast('💰 Не хватает кредитов: ' + j.title);
-  else if (r.status === 'reply') toast('💬 Есть вопрос: ' + j.title);
-  else toast('😕 Не вышло: ' + j.title);
+  else if (r.status === 'no_credits') toast('Недостаточно кредитов: ' + j.title);
+  else if (r.status === 'reply') toast('Есть вопрос: ' + j.title);
+  else toast('Не получилось: ' + j.title);
 }
 
 /* ---------- Экран ожидания ---------- */
@@ -343,7 +350,7 @@ function openWait(id) {
   window.scrollTo(0, 0);
 }
 
-// «Свернуть» — на главную, опрос продолжается. Закончившийся с ошибкой заказ человек уже видел — убираем.
+// «Скрыть» — на главную, опрос продолжается. Закончившийся с ошибкой заказ человек уже видел — убираем.
 function closeWait() {
   const j = jobFind(state.wait);
   if (j) {
@@ -389,14 +396,12 @@ function renderWait() {
   if (running) {
     renderWaitTick();
   } else {
-    $('wait-text').textContent = j.text || (j.status === 'no_credits'
-      ? 'Не хватает кредитов. Пополни баланс — и попробуй ещё раз.'
-      : j.status === 'reply' ? 'Бот не понял запрос. Попробуй описать по-другому.' : 'Что-то пошло не так. Кредиты не списались — попробуй ещё раз.');
+    $('wait-text').textContent = j.text || jobDefaultText(j);
   }
   $('wait-retry').hidden = j.status !== 'error';
   $('wait-topup').hidden = j.status !== 'no_credits';
   $('wait-change').hidden = running || !jobFormFor(j);
-  setLabel($('wait-hide'), running ? 'Свернуть' : 'Закрыть');
+  setLabel($('wait-hide'), running ? 'Скрыть' : 'Закрыть');
 }
 
 function renderWaitTick() {
@@ -445,7 +450,7 @@ function jobRetry() {
   if (j.photos > images.length) {
     // фото после перезапуска не сохранились — пусть выберет заново
     jobChange();
-    toast('Добавь фото ещё раз');
+    toast('Загрузи фото ещё раз');
     return;
   }
   const data = j.data;

@@ -72,10 +72,10 @@ function renderEditor() {
     ed.what = edWhatForOrder(order);
     $('ed-work-name').textContent = order.title || 'Без названия';
     $('ed-work-note').textContent = isSketch(order)
-      ? 'После отправки эскиз придёт в чат — там выбери размер, и бот слепит модель'
+      ? 'После отправки эскиз придёт в Telegram — там выбери размер, и бот сделает 3D-модель'
       : ed.what === 'sketch'
-        ? 'Правишь эскиз, из которого слеплена модель. После отправки выбери размер в чате — бот слепит новую модель (5 кр., подарок или оплаченная модель)'
-        : 'После отправки нажми в чате «🔥 Собрать DXF»';
+        ? 'Ты меняешь эскиз, из которого сделана модель. После отправки выбери размер в Telegram — бот сделает новую 3D-модель (по цене 3D-модели)'
+        : 'После отправки нажми в Telegram кнопку «Собрать DXF»';
   } else {
     if (avail.indexOf(ed.what) === -1) ed.what = avail[0];
     document.querySelectorAll('#ed-switch button').forEach((b) => {
@@ -84,11 +84,11 @@ function renderEditor() {
     });
     $('ed-switch').classList.toggle('is-single', avail.length === 1);
     $('ed-hint').textContent = ed.what === 'sketch'
-      ? 'После отправки выбери в чате размер — и бот слепит модель'
-      : 'После отправки нажми в чате «🔥 Собрать DXF»';
+      ? 'После отправки выбери в Telegram размер — и бот сделает 3D-модель'
+      : 'После отправки нажми в Telegram кнопку «Собрать DXF»';
   }
 
-  $('ed-price').textContent = Number(state.me.free_left) > 0 ? 'бесплатно' : '1 кр.';
+  $('ed-price').textContent = jobPrice('sketch_edit') || credits(1);
   edRenderTools();
   edUpdateButtons();
 
@@ -640,7 +640,7 @@ function edRenderTools() {
   const tips = {
     brush: ed.what === 'drawing' ? 'Чёрная кисть — дорисуй линии.' : 'Кисть — дорисуй или закрась.',
     eraser: 'Ластик закрашивает белым.',
-    mark: 'Обведи красным место, которое должна поправить нейронка.',
+    mark: 'Обведи красным место, которое нужно изменить.',
     crop: 'Протяни рамку пальцем, потом нажми «Применить».',
   };
   $('ed-tip').textContent = tips[ed.tool] + (crop ? '' : ' Двумя пальцами — сдвиг и зум.');
@@ -717,7 +717,7 @@ async function edSend(kind) {
     if (marked) params.marked = 'true';
   }
 
-  edBusy(true, kind === 'ai' ? 'Нейронка правит… ~30 секунд' : 'Отправляю…');
+  edBusy(true, kind === 'ai' ? 'Вношу изменения… около 30 секунд' : 'Отправляю…');
   const r = await Api.edit(params, ED_SEND_TIMEOUT);
   const data = r.data;
   edBusy(false);
@@ -730,7 +730,7 @@ async function edSend(kind) {
       renderBalance();
     }
     hapticNotify('success');
-    alertBox('Готово! Правка в чате 👌', () => tg.close());
+    alertBox('Готово! Результат отправлен в Telegram', () => tg.close());
   } else if (data && data.error === 'no_credits') {
     edNoCredits();
   } else {

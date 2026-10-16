@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=15">
+  <link rel="stylesheet" href="style.css?v=16">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -148,11 +148,11 @@
       </div>
       <div class="wait-actions">
         <button class="btn btn-primary btn-wide" id="wait-retry" type="button" hidden>Попробовать ещё раз</button>
-        <button class="btn btn-primary btn-wide" id="wait-topup" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span>Пополнить</span></button>
+        <button class="btn btn-primary btn-wide" id="wait-topup" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span>Пополнить баланс</span></button>
         <button class="btn btn-secondary btn-wide" id="wait-change" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Изменить запрос</span></button>
-        <button class="btn btn-ghost btn-wide" id="wait-hide" type="button">Свернуть</button>
+        <button class="btn btn-ghost btn-wide" id="wait-hide" type="button">Скрыть</button>
       </div>
-      <p class="note wait-note" id="wait-note">Можно закрыть приложение — результат придёт в чат</p>
+      <p class="note wait-note" id="wait-note">Можно закрыть приложение — готовый файл придёт в Telegram</p>
     </section>
 
     <!-- Вкладка «Мои работы» -->
@@ -164,7 +164,7 @@
       <div id="works-grid" class="grid"></div>
       <div id="works-empty" class="empty" hidden>
         <div class="empty-icon"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg></div>
-        <p>Пока пусто — создай первую работу на вкладке ✨ Создать</p>
+        <p>Здесь появятся твои работы. Создай первую на главном экране</p>
       </div>
     </section>
 
@@ -181,9 +181,9 @@
         </div>
       </div>
       <div class="detail-actions">
-        <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg><span>Покрутить в 3D</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Сделать подвижной</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>В конструктор</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg><span>Посмотреть в 3D</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Сделать подвижной (на шарнирах)</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Открыть конструктор</span></button>
         <div id="detail-resize" hidden>
           <button class="btn btn-secondary btn-wide" id="detail-resize-btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Другой размер</span></button>
           <div class="detail-sizes" id="detail-sizes" hidden>
@@ -202,13 +202,13 @@
             <p class="order-hint">Длинная сторона, от 10 до 1000 мм · бесплатно</p>
           </div>
         </div>
-        <button class="btn btn-secondary btn-wide" id="detail-ask" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Поправить словами</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-edit" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-brush"/></svg><span>В редакторе</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-again" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Другой вариант</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-ask" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Изменить описанием</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-edit" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-brush"/></svg><span>Редактор</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-again" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Ещё вариант</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-reformat" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span>Другой формат</span></button>
-        <button class="btn btn-secondary btn-wide" id="detail-remodel" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Слепить заново</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-remodel" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Сделать модель заново</span></button>
       </div>
-      <p class="note" id="detail-sent" hidden>Файл также пришёл в чат с ботом</p>
+      <p class="note" id="detail-sent" hidden>Файл также отправлен в Telegram</p>
       <p class="note" id="detail-note"></p>
     </section>
 
@@ -219,24 +219,23 @@
       </header>
 
       <div class="hero">
-        <div class="hero-label">У тебя на счету</div>
-        <div class="hero-value"><span id="bal-value">0</span> <span class="hero-unit" id="bal-unit">кредитов</span></div>
+        <div class="hero-value"><span class="hero-unit">Кредиты:</span> <span id="bal-value">0</span></div>
         <div class="hero-free" id="bal-free"></div>
         <div class="hero-models" id="bal-models" hidden></div>
       </div>
 
       <button class="gift" id="gift" type="button" hidden>
-        <span class="gift-title">🎁 Первая 3D-модель — в подарок!</span>
-        <span class="gift-text">Сделай фигурку на вкладке ✨ Создать — кредиты не спишутся</span>
+        <span class="gift-title">Первая 3D-модель — бесплатно</span>
+        <span class="gift-text">Опиши фигурку на главном экране — кредиты не спишутся</span>
       </button>
 
       <h2 class="section-title">Цены</h2>
       <div class="card list">
-        <div class="row"><svg class="i" aria-hidden="true"><use href="#i-laser"/></svg><span>Чертёж / эскиз</span><b id="price-image">1 кр.</b></div>
-        <div class="row"><svg class="i" aria-hidden="true"><use href="#i-cube"/></svg><span>3D-модель<span class="row-note" id="price-model-note" hidden> (первая — бесплатно)</span></span><b id="price-model">4 кр.</b></div>
+        <div class="row"><svg class="i" aria-hidden="true"><use href="#i-laser"/></svg><span>Чертёж / эскиз</span><b id="price-image"></b></div>
+        <div class="row"><svg class="i" aria-hidden="true"><use href="#i-cube"/></svg><span>3D-модель<span class="row-note" id="price-model-note" hidden> (первая — бесплатно)</span></span><b id="price-model"></b></div>
         <div class="row" id="price-cad-row" hidden>
-          <svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Деталь по размерам<span class="row-note" id="price-cad-note" hidden> (первая в подарок)</span><span class="row-sub" id="price-cad-edit"></span></span>
-          <b id="price-cad">2 кр.</b>
+          <svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Деталь по размерам<span class="row-note" id="price-cad-note" hidden> (первая — бесплатно)</span><span class="row-sub" id="price-cad-edit"></span></span>
+          <b id="price-cad"></b>
         </div>
       </div>
 
@@ -255,9 +254,9 @@
 
       <div id="flexi-main">
         <h1 class="detail-title cad-title" id="flexi-title">Загружаю модель…</h1>
-        <div class="detail-meta"><span>⛓ Цепочка · печатается сразу подвижной</span><span id="flexi-dim">Размер: 15 см</span></div>
+        <div class="detail-meta"><span>На шарнирах · печатается одной деталью</span><span id="flexi-dim">Размер: 15 см</span></div>
         <div class="flexi-warn" id="flexi-warn-parts" hidden></div>
-        <div class="flexi-warn" id="flexi-warn-pose" hidden>Эта модель не в позе лёжа — суставы могут не напечататься. Лучше сделай новую «🦎 Подвижная» в боте</div>
+        <div class="flexi-warn" id="flexi-warn-pose" hidden>Эта модель не в позе лёжа — суставы могут не напечататься. Лучше создай новую фигурку в режиме «Подвижная на шарнирах»</div>
 
         <div class="flexi-status" id="flexi-status">
           <div class="spinner"></div>
@@ -314,7 +313,7 @@
           <p class="flexi-size" id="flexi-size" hidden>Для подвижных лучше 15–20 см — звеньев будет больше</p>
 
           <button type="button" class="btn btn-primary btn-wide flexi-build" id="flexi-build" disabled>🔧 Собрать STL</button>
-          <p class="note" id="flexi-hint">Печатай одним цветом, слой 0.2, 2–3 стенки, без поддержек. Сопло на 5° горячее обычного. Разминай, сгибая в стороны. Не масштабируй в слайсере — суставы рассчитаны на этот размер.</p>
+          <p class="note" id="flexi-hint">Печатай одним цветом, слой 0.2, 2–3 стенки, без поддержек. Сопло на 5° горячее обычного. Разминай, сгибая в стороны. Не меняй размер в программе для печати — шарниры рассчитаны на этот размер.</p>
 
           <div id="flexi-result" hidden>
             <h2 class="section-title">Что получилось</h2>
@@ -347,26 +346,26 @@
           <div class="cad-busy" id="cad-busy" hidden><span class="cad-busy-dot"></span>Считаю деталь…</div>
           <div class="cad-engine" id="cad-engine" hidden>
             <div class="spinner" id="cad-engine-spinner"></div>
-            <p id="cad-engine-text">Загружаю движок чертежей…</p>
+            <p id="cad-engine-text">Загружаю конструктор…</p>
             <button class="btn btn-primary" id="cad-engine-retry" type="button" hidden>Попробовать ещё раз</button>
           </div>
         </div>
         <p class="cad-dims" id="cad-dims"></p>
 
         <div class="cad-error" id="cad-error" hidden>
-          <b class="cad-error-title">Деталь не собралась</b>
+          <b class="cad-error-title">Не получилось построить деталь</b>
           <details class="cad-details">
             <summary>Подробности</summary>
             <pre id="cad-log"></pre>
           </details>
-          <button class="btn btn-primary btn-wide" id="cad-fix" type="button">🔧 Починить нейронкой</button>
-          <p class="cad-fix-limit" id="cad-fix-limit" hidden>Лимит починок исчерпан. Нажми «✏️ Поправить словами» и опиши, что не так, — перечерчу</p>
+          <button class="btn btn-primary btn-wide" id="cad-fix" type="button">Исправить автоматически</button>
+          <p class="cad-fix-limit" id="cad-fix-limit" hidden>Автоматические исправления закончились. Нажми «Изменить описанием» и опиши, что не так, — деталь будет создана заново</p>
         </div>
 
         <div id="cad-params" class="cad-params"></div>
         <button class="btn btn-secondary btn-wide cad-reset" id="cad-reset" type="button" hidden>↺ Вернуть размеры</button>
-        <button class="btn btn-secondary btn-wide cad-ask" id="cad-ask" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Поправить словами</span></button>
-        <p class="note">Размеры здесь меняются бесплатно. Поменять форму (добавить отверстие, паз, надпись) — «✏️ Поправить словами».</p>
+        <button class="btn btn-secondary btn-wide cad-ask" id="cad-ask" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Изменить описанием</span></button>
+        <p class="note">Размеры здесь меняются бесплатно. Чтобы изменить форму (добавить отверстие, паз, надпись), нажми «Изменить описанием».</p>
         <p class="cad-credit">Движок: <a href="https://github.com/openscad/openscad" id="cad-credit" target="_blank" rel="noopener">OpenSCAD (GPL-2.0)</a></p>
       </div>
     </section>
@@ -379,7 +378,7 @@
 
       <div id="ed-empty" class="empty" hidden>
         <div class="empty-emoji">✏️</div>
-        <p>Пока нечего править — сначала сделай эскиз или чертёж на вкладке ✨ Создать</p>
+        <p>Пока нечего изменять — сначала создай эскиз или чертёж на главном экране</p>
       </div>
 
       <div id="ed-main" hidden>
@@ -444,9 +443,9 @@
           placeholder="например: «сделай ступени шире», «убери надпись» или «добавь паз под часы»"></textarea>
 
         <button type="button" class="btn btn-primary btn-wide ed-send" id="ed-ai" disabled>
-          🪄 Поправить нейронкой <span class="ed-price" id="ed-price">бесплатно</span>
+          Изменить по описанию <span class="ed-price" id="ed-price">бесплатно</span>
         </button>
-        <button type="button" class="btn btn-secondary btn-wide ed-send" id="ed-save">✅ Отправить в чат как есть</button>
+        <button type="button" class="btn btn-secondary btn-wide ed-send" id="ed-save">Отправить в Telegram без изменений</button>
         <p class="note" id="ed-hint"></p>
       </div>
     </section>
@@ -457,7 +456,7 @@
     <div class="composer-box">
       <div class="composer-tags" id="composer-tags"></div>
       <div class="composer-photos" id="composer-photos" hidden></div>
-      <textarea class="composer-input" id="composer-input" rows="1" maxlength="1500" placeholder="Опиши, что сделать…" aria-label="Что сделать"></textarea>
+      <textarea class="composer-input" id="composer-input" rows="1" maxlength="1500" placeholder="Опиши, что нужно сделать…" aria-label="Что нужно сделать"></textarea>
       <div class="composer-opts" id="composer-opts" hidden></div>
       <p class="composer-hint" id="composer-hint" hidden></p>
       <div class="composer-row">
@@ -465,13 +464,14 @@
         <div class="composer-modes" id="composer-modes">
           <button class="mode" type="button" data-mode="laser"><svg class="i" aria-hidden="true"><use href="#i-laser"/></svg><span>Лазер</span></button>
           <button class="mode" type="button" data-mode="3d"><svg class="i" aria-hidden="true"><use href="#i-cube"/></svg><span>3D</span></button>
-          <button class="mode" type="button" data-mode="flexi"><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Подвижная</span></button>
+          <button class="mode" type="button" data-mode="flexi"><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Подвижная на шарнирах</span></button>
           <button class="mode" type="button" data-mode="cad"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Деталь</span></button>
-          <button class="mode" type="button" data-mode="scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span>Скан</span></button>
+          <button class="mode" type="button" data-mode="scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span>По фото</span></button>
         </div>
-        <span class="composer-price" id="composer-price"></span>
         <button class="composer-send" id="composer-send" type="button" aria-label="Отправить" disabled><svg class="i" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
       </div>
+      <!-- что делает выбранный режим и сколько стоит -->
+      <div class="composer-sub"><span class="composer-about" id="composer-about"></span><span class="composer-price" id="composer-price"></span></div>
       <input type="file" id="composer-file" accept="image/*" multiple hidden>
     </div>
   </div>
@@ -513,12 +513,12 @@
     </div>
   </div>
 
-  <script src="api.js?v=3"></script>
-  <script src="app.js?v=11"></script>
-  <script src="jobs.js?v=3"></script>
-  <script src="create.js?v=3"></script>
-  <script src="editor.js?v=8"></script>
-  <script src="cad.js?v=3"></script>
-  <script src="flexi.js?v=14"></script>
+  <script src="api.js?v=4"></script>
+  <script src="app.js?v=12"></script>
+  <script src="jobs.js?v=4"></script>
+  <script src="create.js?v=4"></script>
+  <script src="editor.js?v=9"></script>
+  <script src="cad.js?v=4"></script>
+  <script src="flexi.js?v=15"></script>
 </body>
 </html>

@@ -20,43 +20,43 @@ const FORMS = {
     placeholder: 'например: олень в лесу, тонкие линии',
     chips: ['Волк воет на луну', 'Ключница-домик', 'Узор для разделочной доски', 'Имя в рамке'],
     photoMode: true,
-    button: 'Нарисовать',
+    button: 'Создать',
     kind: (s) => (s.mode === 'photo' ? 'laser_photo' : 'laser_new'),
   },
   '3d': {
     title: '3D-фигурка',
     modes: true,
-    label: 'Что слепить?',
+    label: 'Какую фигурку сделать?',
     placeholder: 'например: дракон сидит, крылья сложены',
     flexi: true,
     extra: true,
-    button: 'Нарисовать',
-    note: 'Сначала нарисую эскиз — посмотришь и решишь, лепить ли из него 3D-модель',
+    button: 'Создать',
+    note: 'Сначала будет эскиз — посмотришь и решишь, делать ли из него 3D-модель',
     kind: (s) => (s.mode === 'photo' ? 'sketch_photo' : 'sketch'),
   },
   cad: {
     title: 'Деталь по размерам',
     label: 'Опиши деталь с размерами в мм',
     placeholder: 'например: пластина 50×30×3, два отверстия 5 мм по краям',
-    chips: ['Пластина 50×30×3, два отверстия 5 мм по краям'],
+    chips: ['Пластина 50×30×3, два отверстия 5 мм'],
     format: true,
-    button: 'Начертить',
+    button: 'Создать',
     note: 'Потом размеры можно поменять в конструкторе — бесплатно',
     kind: () => 'cad',
   },
   scan: {
-    title: 'Скан по фото',
-    lead: 'Сними предмет со всех сторон: спереди, сбоку, сзади, с другого бока. Однотонный фон, хороший свет, предмет целиком в кадре, без рук',
+    title: '3D по фото предмета',
+    lead: 'Модель по 3–6 фото с разных сторон. Сними предмет спереди, сбоку, сзади и с другого бока. Однотонный фон, хороший свет, предмет целиком в кадре, без рук',
     photos: 6,
     minPhotos: 3,
-    button: 'Слепить модель',
+    button: 'Создать',
     note: 'Получится похожая модель, но не точная копия по размерам',
     kind: () => 'scan',
   },
   edit: {
-    title: 'Поправить словами',
-    label: 'Что поменять?',
-    button: 'Поправить',
+    title: 'Изменить описанием',
+    label: 'Что изменить?',
+    button: 'Изменить',
     kind: (s) => editKind(s.base),
   },
 };
@@ -67,19 +67,20 @@ const EDIT_PLACEHOLDERS = {
   cad_edit: 'например: добавь паз 10×3 посередине',
 };
 
-// Режимы композера: иконка и подсказка в поле ввода.
+// Режимы композера: иконка, название и подсказка мелко под чипсами.
 const MODES = {
-  laser: { icon: 'laser', name: 'Лазер', placeholder: 'Что вырезать или выжечь? Или прикрепи фото' },
-  '3d': { icon: 'cube', name: '3D', placeholder: 'Какую фигурку слепить? Или прикрепи фото' },
-  flexi: { icon: 'joint', name: 'Подвижная', placeholder: 'Какое животное на шарнирах? Ящерица, дракон, осьминог…' },
-  cad: { icon: 'ruler', name: 'Деталь', placeholder: 'Опиши деталь с размерами в мм' },
-  scan: { icon: 'scan', name: 'Скан', placeholder: 'Прикрепи 3–6 фото предмета со всех сторон' },
+  laser: { icon: 'laser', name: 'Лазер', about: 'чертёж для резки и гравировки, файл DXF' },
+  '3d': { icon: 'cube', name: '3D', about: 'сначала эскиз, потом 3D-модель для печати' },
+  flexi: { icon: 'joint', name: 'Подвижная на шарнирах', about: 'фигурка на шарнирах, печатается одной деталью' },
+  cad: { icon: 'ruler', name: 'Деталь', about: 'точные размеры в миллиметрах' },
+  scan: { icon: 'scan', name: 'По фото', about: '3–6 фото предмета с разных сторон' },
 };
+const COMPOSER_PLACEHOLDER = 'Опиши, что нужно сделать…';
 
 // Пустая лента — примеры: тап подставляет текст и режим.
 const EXAMPLES = [
   { text: 'Волк воет на луну', mode: 'laser', note: 'для лазера' },
-  { text: 'Ящерица на шарнирах', mode: 'flexi', note: 'подвижная фигурка' },
+  { text: 'Ящерица на шарнирах', mode: 'flexi', note: 'фигурка на шарнирах' },
   { text: 'Держатель для телефона 75 мм', mode: 'cad', note: 'деталь по размерам' },
   { text: 'Котик спит клубком', mode: '3d', note: '3D-фигурка' },
 ];
@@ -127,12 +128,10 @@ function saveLastMode(m) {
   try { localStorage.setItem(LAST_MODE_KEY, m); } catch (e) { /* ок */ }
 }
 
-// Цена у кнопки отправки и на кнопках ленты — коротко.
+// Цена под композером, отдельным словом: «1 кредит», «Бесплатно», «Бесплатно (подарок)», «Оплачено».
 function shortPrice(kind) {
-  const p = jobPrice(kind);
-  if (p === '🎁 бесплатно') return '🎁';
-  if (p === 'из оплаченных') return 'оплачено';
-  return p;
+  const p = isGift(kind) ? 'бесплатно (подарок)' : jobPrice(kind);
+  return p.charAt(0).toUpperCase() + p.slice(1);
 }
 
 /* ---------- Вкладка «Создать» ---------- */
@@ -145,9 +144,9 @@ function renderCreate() {
   sub.textContent = '';
   if (me) {
     if (me.free_per_day != null) {
-      sub.appendChild(document.createTextNode('Бесплатных картинок сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0) + ' · '));
+      sub.appendChild(document.createTextNode('Бесплатно сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0) + ' · '));
     }
-    const bal = el('button', '', 'Баланс: ' + formatNumber(Number(me.balance) || 0) + ' кр.');
+    const bal = el('button', '', 'Баланс: ' + credits(Number(me.balance) || 0));
     bal.type = 'button';
     bal.addEventListener('click', () => {
       haptic();
@@ -212,7 +211,7 @@ async function loadChatDraft() {
   }
   if (failed && comp.fromDraft === at) {
     hapticNotify('error');
-    toast(failed === photos ? 'Фото из чата не загрузились — прикрепи их сам' : 'Не все фото из чата загрузились — прикрепи их ещё раз');
+    toast(failed === photos ? 'Фото из Telegram не загрузились — загрузи их ещё раз' : 'Не все фото из Telegram загрузились — загрузи их ещё раз');
   }
 }
 
@@ -238,7 +237,7 @@ function composerPlan() {
       return n ? { kind: 'sketch_photo', ok: true, hint: first } : { kind: 'sketch', ok: !!text, hint: '' };
     case 'flexi':
       return n
-        ? { kind: 'sketch', ok: false, hint: 'Подвижная — по описанию, без фото. Убери фото или выбери «3D»' }
+        ? { kind: 'sketch', ok: false, hint: 'Фигурка на шарнирах делается по описанию, без фото. Убери фото или выбери «3D»' }
         : { kind: 'sketch', ok: !!text, hint: '', flexi: true };
     case 'cad':
       return n
@@ -248,7 +247,7 @@ function composerPlan() {
       return {
         kind: 'scan',
         ok: n >= 3,
-        hint: n >= 3 ? '' : n ? 'Добавь ещё фото — нужно хотя бы 3' : 'Прикрепи 3–6 фото предмета со всех сторон',
+        hint: n >= 3 ? '' : n ? 'Добавь ещё фото — нужно хотя бы 3' : 'Загрузи 3–6 фото предмета с разных сторон',
       };
   }
 }
@@ -283,7 +282,7 @@ function renderComposer() {
     tags.appendChild(composerTag('pencil', 'Правка: ' + (comp.edit.title || 'Без названия'), composerExitEdit, 'Выйти из правки'));
   }
   if (comp.fromDraft) {
-    tags.appendChild(composerTag('message', 'Из чата', composerDropDraft, 'Убрать текст и фото из чата'));
+    tags.appendChild(composerTag('message', 'Из сообщения в Telegram', composerDropDraft, 'Убрать текст и фото из сообщения'));
   }
 
   const box = $('composer-photos');
@@ -316,8 +315,8 @@ function renderComposer() {
 
   const input = $('composer-input');
   input.placeholder = comp.edit
-    ? 'Что поменять в «' + (comp.edit.title || 'работе') + '»?'
-    : MODES[comp.mode].placeholder;
+    ? 'Что изменить в «' + (comp.edit.title || 'работе') + '»?'
+    : COMPOSER_PLACEHOLDER;
 
   $('composer-modes').hidden = !!comp.edit;
   $('composer-clip').hidden = !!comp.edit;
@@ -355,6 +354,7 @@ function renderComposer() {
   const plan = composerPlan();
   $('composer-hint').textContent = plan.hint;
   $('composer-hint').hidden = !plan.hint;
+  $('composer-about').textContent = comp.edit ? 'изменение описанием' : MODES[comp.mode].about;
   $('composer-price').textContent = plan.kind ? shortPrice(plan.kind) : '';
   const send = $('composer-send');
   send.disabled = !plan.ok || comp.sending;
@@ -395,7 +395,7 @@ function composerExitEdit() {
   renderComposer();
 }
 
-// «Из чата ×» — не надо: убираем подставленное и больше не предлагаем.
+// «Из сообщения в Telegram ×» — не надо: убираем подставленное и больше не предлагаем.
 function composerDropDraft() {
   const at = comp.fromDraft;
   if (!at) return;
@@ -426,7 +426,7 @@ function composerStart(mode, text) {
   $('composer-input').focus();
 }
 
-// «Поправить» в карточке ленты: правка прямо в композере.
+// «Изменить» в карточке ленты: правка прямо в композере.
 function composerEdit(o) {
   haptic();
   comp.edit = o;
@@ -477,7 +477,7 @@ async function composerSend() {
     title = text ? shortTitle(text) : plan.kind === 'laser_photo' ? 'Рисунок по фото' : 'Фигурка по фото';
   } else if (plan.kind === 'scan') {
     data.images = comp.photos.slice(0, MAX_PHOTOS);
-    title = 'Скан по фото';
+    title = '3D по фото предмета';
   } else {
     data.prompt = text;
     title = shortTitle(text);
@@ -559,22 +559,17 @@ function pill(iconName, text, onClick, cls) {
   return b;
 }
 
-function withShortPrice(label, kind) {
-  const p = shortPrice(kind);
-  return p ? label + ' · ' + p : label;
-}
-
 // Кнопки следующего шага у готовой работы.
 function resultActions(o) {
   const k = kindOf(o);
   const out = [];
   if (k === 'sketch') {
-    out.push(pill('cube', withShortPrice('Лепим 3D', 'model'), () => feedMakeModel(o)));
-    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
-    if (o.editable !== false) out.push(pill('brush', 'В редактор', () => openOrderInEditor(o)));
+    out.push(pill('cube', withPrice('Сделать 3D-модель', 'model'), () => feedMakeModel(o)));
+    out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
+    if (o.editable !== false) out.push(pill('brush', 'Редактор', () => openOrderInEditor(o)));
   } else if (k === 'model') {
     if (isStl(o) && hasFile(o)) {
-      out.push(pill('rotate', 'Покрутить в 3D', () => {
+      out.push(pill('rotate', 'Посмотреть в 3D', () => {
         openDetail(o);
         openViewer();
       }));
@@ -593,10 +588,10 @@ function resultActions(o) {
         $('detail-sizes').hidden = false;
       }));
     }
-    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
+    out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
   } else {
     out.push(pill('ruler', 'Открыть конструктор', () => openCad(o.id)));
-    out.push(pill('pencil', 'Поправить', () => composerEdit(o)));
+    out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
   }
   return out;
 }
@@ -621,7 +616,7 @@ function resultCard(o) {
   const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
   const meta = [kindName];
   if (kindOf(o) === 'model' || kindOf(o) === 'laser') meta.push(formatLabel(o));
-  if (isSketch(o) && isFlexiMode(o)) meta.push('подвижная');
+  if (isSketch(o) && isFlexiMode(o)) meta.push('на шарнирах');
   info.appendChild(el('div', 'result-meta', meta.filter(Boolean).join(' · ')));
   main.appendChild(info);
   main.addEventListener('click', () => {
@@ -665,7 +660,7 @@ function jobCard(j) {
   const actions = el('div', 'result-actions');
   if (j.status === 'error') actions.appendChild(pill('refresh', 'Попробовать ещё раз', () => feedRetry(j)));
   if (j.status === 'no_credits') {
-    actions.appendChild(pill('wallet', 'Пополнить', () => {
+    actions.appendChild(pill('wallet', 'Пополнить баланс', () => {
       haptic();
       jobRemove(j);
       goToBalance();
@@ -684,8 +679,8 @@ function jobCard(j) {
 }
 
 function jobDefaultText(j) {
-  if (j.status === 'no_credits') return 'Не хватает кредитов. Пополни баланс — и попробуй ещё раз.';
-  if (j.status === 'reply') return 'Бот не понял запрос. Попробуй описать по-другому.';
+  if (j.status === 'no_credits') return 'Недостаточно кредитов. Пополни баланс и попробуй ещё раз.';
+  if (j.status === 'reply') return 'Не получилось понять запрос. Попробуй описать по-другому.';
   return 'Что-то пошло не так. Кредиты не списались — попробуй ещё раз.';
 }
 
@@ -695,7 +690,7 @@ function feedRetry(j) {
   const images = j.data.images || [];
   if (j.photos > images.length) {
     composerFromJob(j);
-    toast('Прикрепи фото ещё раз');
+    toast('Загрузи фото ещё раз');
     return;
   }
   const data = j.data;
@@ -918,7 +913,7 @@ function renderOrder() {
   });
 
   $('order-note').textContent = s.form === 'edit'
-    ? (editKind(s.base) === 'sketch_edit' ? 'Нарисую новый эскиз с правкой — старый останется' : 'Сделаю новую версию — старая останется в «Моих работах»')
+    ? (editKind(s.base) === 'sketch_edit' ? 'Будет новый эскиз с изменениями — старый останется' : 'Будет новая версия — старая останется в «Моих работах»')
     : f.note || '';
 
   renderPhotos();
@@ -1086,7 +1081,7 @@ function submitOrder() {
   } else if (kind === 'scan') {
     if (s.photos.length < (f.minPhotos || 1)) return orderFail('Нужно хотя бы ' + f.minPhotos + ' фото');
     data.images = s.photos.slice(0, f.photos);
-    title = 'Скан по фото';
+    title = '3D по фото предмета';
   } else {
     if (!prompt) return orderFail('Опиши, что сделать', 'order-prompt');
     data.prompt = prompt;

@@ -97,11 +97,11 @@ function openFlexi(id) {
       } else if (code === 'network') {
         flexiShowMissing('Нет связи с сервером. Проверь интернет и попробуй ещё раз', 'retry');
       } else if (code === 'holes') {
-        flexiShowMissing('Модель с дырками — шарниры не собрать. Попроси бота слепить заново', 'back');
+        flexiShowMissing('В модели есть дыры — шарниры не собрать. Попробуй сделать модель заново', 'back');
       } else if (code === 'worker' || !f.core) {
         flexiShowMissing('Сборщик не запустился на этом телефоне. Обнови Telegram и попробуй ещё раз', 'back');
       } else if (code === 'bad_stl') {
-        flexiShowMissing('Файл модели не читается. Попроси бота слепить заново', 'back');
+        flexiShowMissing('Файл модели не читается. Попробуй сделать модель заново', 'back');
       } else {
         flexiShowMissing('Модель не найдена', 'back');
       }
@@ -1087,7 +1087,7 @@ function flexiSnapshot() {
   return url;
 }
 
-/* ---------- Прислать в чат ---------- */
+/* ---------- Отправить в Telegram ---------- */
 
 function flexiReady(f) {
   return !!(f && f.built && !f.stale && !f.built.errors.length && f.built.joints.length);
@@ -1102,7 +1102,7 @@ function flexiUpdateMainButton() {
   }
   const ready = flexiReady(f);
   tg.MainButton.setParams(Object.assign({
-    text: '📤 Прислать STL в чат',
+    text: 'Отправить STL в Telegram',
     is_visible: true,
     is_active: ready,
   }, mainButtonColors(ready)));
@@ -1125,14 +1125,14 @@ async function flexiExport() {
   }
   state.flexiBusy = true;
   $('busy').hidden = false;
-  $('busy-text').textContent = 'Отправляю в чат…';
+  $('busy-text').textContent = 'Отправляю в Telegram…';
   let r;
   try {
     let snapshot = '';
     try { snapshot = flexiSnapshot(); } catch (e) { /* без снимка */ }
     r = await cadPost({
       a: 'flexi', id: f.id, file: await cadBlobToDataUrl(bytes), snapshot,
-      caption: 'Не масштабируй в слайсере — суставы рассчитаны на этот размер', // текст к STL в чате
+      caption: 'Не меняй размер в программе для печати — шарниры рассчитаны на этот размер', // текст к STL в чате
     }, 120000);
   } catch (e) {
     r = { status: 0, data: null };
@@ -1143,7 +1143,7 @@ async function flexiExport() {
     sessionExpired();
   } else if (r.data && r.data.ok === true) {
     hapticNotify('success');
-    alertBox('Готово! Файл в чате 👌');
+    alertBox('Готово! Файл отправлен в Telegram');
     loadMe(false);
   } else {
     hapticNotify('error');

@@ -315,7 +315,7 @@ function cadSetData(data) {
   $('cad-format').textContent = c.format === 'dxf' ? '🔥 DXF для лазера' : '🧊 STL для 3D-принтера';
   $('cad-format').hidden = false;
   $('cad-preview').classList.toggle('is-sheet', c.format === 'dxf');
-  setLabel($('cad-ask'), withPrice('Поправить словами', 'cad_edit'));
+  setLabel($('cad-ask'), withPrice('Изменить описанием', 'cad_edit'));
   $('cad-ask').hidden = false;
   cadSetCode(String(data.scad || ''));
 }
@@ -594,7 +594,7 @@ function cadRenderFix() {
   const c = state.cad;
   const left = c.fixesLeft;
   $('cad-fix').hidden = left <= 0;
-  $('cad-fix').textContent = '🔧 Починить нейронкой (бесплатно, осталось ' + left + ')';
+  $('cad-fix').textContent = 'Исправить автоматически (бесплатно, осталось ' + left + ')';
   $('cad-fix-limit').hidden = left > 0;
 }
 
@@ -604,7 +604,7 @@ function cadEnsureEngine() {
   const box = $('cad-engine');
   let loaded = false;
   engine.onProgress = (pct) => {
-    if (!loaded) $('cad-engine-text').textContent = 'Загружаю движок чертежей… ' + pct + '%';
+    if (!loaded) $('cad-engine-text').textContent = 'Загружаю конструктор… ' + pct + '%';
   };
   // Если движок уже в памяти, плашку даже не показываем.
   const t = setTimeout(() => {
@@ -612,7 +612,7 @@ function cadEnsureEngine() {
     box.hidden = false;
     $('cad-engine-spinner').hidden = false;
     $('cad-engine-retry').hidden = true;
-    $('cad-engine-text').textContent = 'Загружаю движок чертежей…';
+    $('cad-engine-text').textContent = 'Загружаю конструктор…';
   }, 150);
   cadLoadEngine().then(() => {
     loaded = true;
@@ -633,10 +633,10 @@ function cadEngineError(err) {
   $('cad-busy').hidden = true;
   const code = err && err.code;
   $('cad-engine-text').textContent = code === 'engine_network'
-    ? 'Не получилось скачать движок чертежей. Проверь интернет и попробуй ещё раз'
+    ? 'Не получилось загрузить конструктор. Проверь интернет и попробуй ещё раз'
     : code === 'worker' || code === 'engine_compile'
       ? 'Движок чертежей не запустился на этом телефоне. Обнови Telegram и попробуй ещё раз'
-      : 'Не получилось запустить движок чертежей';
+      : 'Не получилось запустить конструктор';
 }
 
 function cadRetryEngine() {
@@ -942,7 +942,7 @@ async function cadSnapshotSvg() {
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
-/* ---------- Кнопка «Прислать в чат» ---------- */
+/* ---------- Кнопка «Отправить в Telegram» ---------- */
 
 function cadUpdateMainButton() {
   const c = state.cad;
@@ -953,7 +953,7 @@ function cadUpdateMainButton() {
   }
   const ready = c.status === 'ok' && !c.pending;
   tg.MainButton.setParams(Object.assign({
-    text: c.format === 'dxf' ? '📤 Прислать DXF в чат' : '📤 Прислать STL в чат',
+    text: c.format === 'dxf' ? 'Отправить DXF в Telegram' : 'Отправить STL в Telegram',
     is_visible: true,
     is_active: ready,
   }, mainButtonColors(ready)));
@@ -982,7 +982,7 @@ function cadIsAuth(r) {
   return Api.isAuth(r);
 }
 
-// «✏️ Поправить словами»: форма правки, после неё — снова в конструктор.
+// «Изменить описанием»: форма правки, после неё — снова в конструктор.
 function cadAsk() {
   const c = state.cad;
   if (!c || !c.data || state.cadBusy) return;
@@ -1025,7 +1025,7 @@ async function cadExport() {
   }
 
   const file = await cadBlobToDataUrl(bytes);
-  cadBusy(true, 'Отправляю в чат…');
+  cadBusy(true, 'Отправляю в Telegram…');
   const r = await cadPost({ a: 'export', id: c.id, file, snapshot, scad: c.last.code }, CAD_EXPORT_TIMEOUT);
   cadBusy(false);
 
@@ -1033,7 +1033,7 @@ async function cadExport() {
     sessionExpired();
   } else if (r.data && r.data.ok === true) {
     hapticNotify('success');
-    alertBox('Готово! Файл в чате 👌');
+    alertBox('Готово! Файл отправлен в Telegram');
     loadMe(false); // в «Моих работах» появилась новая работа
   } else {
     hapticNotify('error');
@@ -1041,7 +1041,7 @@ async function cadExport() {
   }
 }
 
-/* ---------- Починка нейронкой ---------- */
+/* ---------- Автоматическое исправление ---------- */
 
 async function cadFix() {
   const c = state.cad;
@@ -1050,7 +1050,7 @@ async function cadFix() {
   clearTimeout(c.timer);
   cadCancelJob();
   const error = c.log.filter((l) => !/Could not initialize localization/.test(l)).join('\n').slice(-4000);
-  cadBusy(true, 'Нейронка чинит… ~30 секунд');
+  cadBusy(true, 'Исправляю деталь… около 30 секунд');
   const r = await cadPost({ a: 'fix', id: c.id, error, scad: cadCurrentCode() }, CAD_FIX_TIMEOUT);
   cadBusy(false);
   if (state.cad !== c) return;
@@ -1062,12 +1062,12 @@ async function cadFix() {
     c.fixesLeft = Number(r.data.fixes_left) || 0;
     $('cad-error').hidden = true;
     cadSetCode(String(r.data.scad)); // заново разбираем параметры и перерисовываем
-    toast('Нейронка поправила код 🔧');
+    toast('Деталь исправлена');
   } else if (r.data && r.data.error === 'fix_limit') {
     c.fixesLeft = 0;
     cadRenderFix();
     hapticNotify('error');
-    alertBox('Лимит починок исчерпан. Нажми «✏️ Поправить словами» и опиши, что не так, — перечерчу');
+    alertBox('Автоматические исправления закончились. Нажми «Изменить описанием» и опиши, что не так, — деталь будет создана заново');
   } else {
     hapticNotify('error');
     alertBox('Не вышло, попробуй ещё раз');
