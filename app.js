@@ -211,6 +211,8 @@ function renderView() {
     t.classList.toggle('is-active', t.dataset.tab === state.tab);
   });
 
+  if (proj.drawer && !composerOn) closeDrawer(); // список проектов — только поверх «Создать»
+
   const editorOpen = inApp && !overlay && state.tab === 'editor';
   if (editorOpen !== state.editorOpen) {
     state.editorOpen = editorOpen;
@@ -243,7 +245,7 @@ function renderView() {
 function syncButtons() {
   const top = topScreen();
   if (top === 'cad' || top === 'flexi') return;
-  if (top) tg.BackButton.show();
+  if (top || proj.drawer) tg.BackButton.show();
   else tg.BackButton.hide();
   let text = '';
   if (top === 'order') text = orderMainText();
@@ -310,7 +312,8 @@ function renderSkeleton() {
   }
 }
 
-function workCard(o) {
+// names — id проекта → название (из projectsAll), чтобы не собирать список для каждой карточки.
+function workCard(o, names) {
   const cadDraft = isCadDraft(o);
   const card = el('div', 'work');
   card.setAttribute('role', 'button');
@@ -329,6 +332,19 @@ function workCard(o) {
     : [formatLabel(o), formatDate(o.date)].filter(Boolean).join(' · '));
   if (cadDraft) meta.classList.add('is-wrap');
   body.appendChild(meta);
+
+  // мелкая строчка с названием проекта — тап открывает проект на «Создать»
+  const pid = orderProject(o);
+  const line = el('button', 'work-project');
+  line.type = 'button';
+  line.appendChild(icon('message'));
+  line.appendChild(el('span', '', (names && names.get(pid)) || (pid === OLD_PROJECT ? 'Ранее' : 'Проект')));
+  line.setAttribute('aria-label', 'Открыть проект «' + line.textContent + '»');
+  line.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openProjectFromWorks(pid);
+  });
+  body.appendChild(line);
 
   if (o.flexi === true) {
     const btn = el('button', 'work-cad-btn');
@@ -376,7 +392,8 @@ function renderWorks() {
 
   const grid = $('works-grid');
   grid.textContent = '';
-  orders.forEach((o) => grid.appendChild(workCard(o)));
+  const names = new Map(projectsAll().map((p) => [p.id, p.name]));
+  orders.forEach((o) => grid.appendChild(workCard(o, names)));
   $('works-empty').hidden = orders.length > 0;
 }
 
@@ -510,6 +527,7 @@ function closeDetail() {
 function goBack() {
   haptic();
   if (state.viewer) closeViewer();
+  else if (proj.drawer) closeDrawer();
   else if (state.flexi) closeFlexi();
   else if (state.cad) closeCad();
   else if (state.wait) closeWait();
@@ -568,14 +586,15 @@ function bindDetail() {
     const saved = o && savedPrompt(o.id);
     if (!saved) return;
     haptic();
-    startJob({ kind: 'sketch', prompt: saved.prompt, flexi: saved.flexi, title: saved.title || o.title || '' }, saved.title || o.title, false);
+    // в проект этой работы, а не в тот, что открыт на «Создать»
+    startJob({ kind: 'sketch', prompt: saved.prompt, flexi: saved.flexi, title: saved.title || o.title || '' }, saved.title || o.title, false, { project: orderProject(o) });
   });
   $('detail-reformat').addEventListener('click', () => {
     const o = state.detail;
     if (!o) return;
     haptic();
     const format = fileFormat(o) === 'STL' ? '3mf' : 'stl';
-    startJob({ kind: 'model_format', format, title: o.title || '' }, o.title || '3D-модель', false);
+    startJob({ kind: 'model_format', format, title: o.title || '' }, o.title || '3D-модель', false, { project: orderProject(o) });
   });
   $('detail-remodel').addEventListener('click', () => {
     const o = state.detail;
@@ -766,6 +785,7 @@ async function loadMe(first) {
   try {
     state.me = await Api.me();
     state.lastLoad = Date.now();
+    projInit(); // последний проект или новый, если в нём больше суток не было работ
     renderWorks();
     renderBalance();
     renderEditor();
@@ -1080,6 +1100,7 @@ function bindEvents() {
   });
 
   bindCreate();
+  bindProjects();
   bindJobs();
   bindEditor();
   bindCad();

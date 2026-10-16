@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=17">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -37,6 +37,9 @@
     <symbol id="i-message" viewBox="0 0 24 24"><path d="M4.5 6A1.5 1.5 0 0 1 6 4.5h12A1.5 1.5 0 0 1 19.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8l-4.5 3.5v-3.5H6A1.5 1.5 0 0 1 4.5 15z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-chain" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11.5 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-5.5"/><path d="m17.3 3.7 3 3-8.3 8.3-3.6.6.6-3.6z"/></symbol>
   </svg>
 
   <!-- Открыли не из Телеги -->
@@ -59,14 +62,21 @@
   </section>
 
   <main id="app" hidden>
-    <!-- Вкладка «Создать»: лента работ, как переписка, и композер внизу -->
+    <!-- Вкладка «Создать»: открытый проект — лента, как переписка, и композер внизу -->
     <section id="view-create" class="view view-create">
-      <header class="hello">
+      <header class="topbar">
+        <button class="icon-btn" id="proj-menu" type="button" aria-label="Проекты"><svg class="i" aria-hidden="true"><use href="#i-menu"/></svg></button>
+        <h2 class="topbar-title" id="proj-title">Новый проект</h2>
+        <button class="icon-btn" id="proj-add" type="button" aria-label="Новый проект" hidden><svg class="i" aria-hidden="true"><use href="#i-compose"/></svg></button>
+      </header>
+      <header class="hello" id="hello">
         <span class="logo" aria-hidden="true">Г</span>
         <h1 class="hello-title" id="hello-title">Что сделаем?</h1>
         <p class="hello-sub" id="hello-sub"></p>
       </header>
       <div class="feed" id="feed"></div>
+      <!-- уточняющие вопросы к последнему запросу (ask.js) -->
+      <div class="feed feed-ask" id="feed-ask"></div>
     </section>
 
     <!-- Экран заказа: лазер, 3D, деталь, скан, правка словами -->
@@ -476,6 +486,21 @@
     </div>
   </div>
 
+  <!-- Проекты: выезжают слева по кнопке в шапке «Создать» -->
+  <div class="drawer" id="drawer" hidden>
+    <div class="drawer-scrim" id="drawer-scrim"></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <span class="logo" aria-hidden="true">Г</span>
+        <h2 class="drawer-title" id="drawer-title">Проекты</h2>
+        <button class="icon-btn" id="drawer-close" type="button" aria-label="Закрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <button class="btn btn-primary btn-wide" id="proj-new" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span>Новый проект</span></button>
+      <div class="proj-list" id="proj-list"></div>
+      <p class="proj-empty" id="proj-empty" hidden>Здесь появятся твои проекты. Каждая новая работа — отдельный проект со своими эскизами, моделями и правками</p>
+    </aside>
+  </div>
+
   <!-- Нижняя панель вкладок -->
   <nav id="tabbar" class="tabbar" hidden>
     <button class="tab is-active" data-tab="create" type="button"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Создать</span></button>
@@ -513,10 +538,12 @@
     </div>
   </div>
 
-  <script src="api.js?v=4"></script>
-  <script src="app.js?v=12"></script>
-  <script src="jobs.js?v=4"></script>
-  <script src="create.js?v=4"></script>
+  <script src="api.js?v=5"></script>
+  <script src="app.js?v=13"></script>
+  <script src="jobs.js?v=5"></script>
+  <script src="create.js?v=5"></script>
+  <script src="projects.js?v=1"></script>
+  <script src="ask.js?v=1"></script>
   <script src="editor.js?v=9"></script>
   <script src="cad.js?v=4"></script>
   <script src="flexi.js?v=15"></script>

@@ -120,28 +120,33 @@ function jobRemove(j) {
 }
 
 // Что человек просил — для облачка в ленте и «Другой вариант» у эскиза. Фото — крошечными миниатюрами.
-function rememberPrompt(orderId, data, thumbs) {
+// ask — уточнение: { text — что написал сам, answers — «Кобра · Мультяшный» }.
+let promptsCache = null;
+
+function promptsAll() {
+  if (!promptsCache) {
+    try { promptsCache = JSON.parse(localStorage.getItem(PROMPTS_KEY) || '{}') || {}; } catch (e) { promptsCache = {}; }
+  }
+  return promptsCache;
+}
+
+function rememberPrompt(orderId, data, thumbs, ask) {
   if (!orderId || !data) return;
   const photos = (data.images || []).length || (data.photos || 0);
   if (!data.prompt && !photos) return;
-  let all = {};
-  try { all = JSON.parse(localStorage.getItem(PROMPTS_KEY) || '{}') || {}; } catch (e) { all = {}; }
+  const all = promptsAll();
   all[orderId] = {
     prompt: data.prompt || '', kind: data.kind, flexi: data.flexi === true, title: data.title || '',
     photos, thumbs: (thumbs || []).slice(0, 3), at: Date.now(),
   };
+  if (ask && ask.text) all[orderId].ask = { text: ask.text, answers: ask.answers || '' };
   const keys = Object.keys(all).sort((a, b) => all[b].at - all[a].at);
   keys.slice(40).forEach((k) => delete all[k]);
   try { localStorage.setItem(PROMPTS_KEY, JSON.stringify(all)); } catch (e) { /* ок */ }
 }
 
 function savedPrompt(orderId) {
-  try {
-    const all = JSON.parse(localStorage.getItem(PROMPTS_KEY) || '{}') || {};
-    return all[orderId] || null;
-  } catch (e) {
-    return null;
-  }
+  return promptsAll()[orderId] || null;
 }
 
 // Миниатюра 96 px для облачка в ленте: в localStorage кладём её, а не само фото.
@@ -163,12 +168,31 @@ function makeThumb(src) {
 
 /* ---------- Отправка заказа ---------- */
 
+// В какой проект заказ: правка, 3D из эскиза, размер — в проект исходной работы (сервер тоже
+// берёт его оттуда); остальное — в проект, из которого заказали. «Ранее» и новый — без project.
+function jobProjectFor(data, origin) {
+  if (data.base_order != null) {
+    const base = findOrder(data.base_order);
+    if (base) return base.project ? String(base.project) : '';
+  }
+  return realProject(origin);
+}
+
 // how: 'main' — нажали MainButton, крутим её прогресс; 'overlay' — затемнение «Отправляю…»;
 // 'inline' — из композера и ленты: экран не меняем, заказ появится в ленте.
-async function startJob(data, title, how) {
+// meta.project — проект, из которого заказали (по умолчанию открытый); meta.from — его экран
+// (viewKey); meta.ask — уточнение, для облачка и строки ответов в ленте.
+async function startJob(data, title, how, meta) {
   if (how === true) how = 'main';
   else if (!how) how = 'overlay';
+  meta = meta || {};
   if (state.creating) return false;
+  const origin = 'project' in meta ? meta.project : proj.current;
+  const from = meta.from || viewKey();
+  if (data.project == null) {
+    const p = jobProjectFor(data, origin);
+    if (p) data.project = p;
+  }
   state.creating = true;
   if (how === 'main') tg.MainButton.showProgress(false);
   else if (how === 'overlay') {
@@ -185,10 +209,15 @@ async function startJob(data, title, how) {
       status: 'running',
       text: '',
       photos: (data.images || []).length,
+      project: String(r.project || data.project || '') || OLD_PROJECT,
       data,
     };
+    if (meta.ask) j.ask = meta.ask;
+    if (!data.project && j.project !== OLD_PROJECT) data.project = j.project; // «Попробовать ещё раз» — в тот же проект
     jobs.list.unshift(j);
     jobsSave();
+    // первый заказ нового проекта: сервер завёл проект — открываем его, если человек всё ещё здесь
+    if (how === 'inline' && viewKey() === from && j.project !== proj.current) projOpen(j.project, { follow: true });
     if (data.images && data.images.length) {
       Promise.all(data.images.slice(0, 3).map(makeThumb)).then((t) => {
         j.thumbs = t.filter(Boolean);
@@ -297,15 +326,24 @@ async function jobPollOne(j) {
   else if (state.wait === j.id) renderWait();
 }
 
-function orderFromJob(o) {
-  return Object.assign({ date: new Date().toISOString(), editable: o.kind === 'sketch' || o.kind === 'laser' }, o);
+function orderFromJob(o, j) {
+  return Object.assign({
+    date: new Date().toISOString(),
+    editable: o.kind === 'sketch' || o.kind === 'laser',
+    project: j ? realProject(j.project) : '',
+    prompt: (j && j.data.prompt) || '',
+  }, o);
 }
 
 async function jobDone(j, r) {
   const watching = state.wait === j.id;
-  jobRemove(j);
   const order = r.order || null;
-  if (order) rememberPrompt(order.id, Object.assign({ photos: j.photos }, j.data), j.thumbs);
+  if (order) {
+    rememberPrompt(order.id, Object.assign({ photos: j.photos }, j.data), j.thumbs, j.ask);
+    // результат — сразу на место карточки ожидания, не дожидаясь ?a=me: лента и проект не мигают
+    if (state.me && !findOrder(order.id)) state.me.orders = [orderFromJob(order, j)].concat(state.me.orders || []);
+  }
+  jobRemove(j);
   hapticNotify('success');
   const title = (order && order.title) || j.title;
   if (watching) {
@@ -317,7 +355,7 @@ async function jobDone(j, r) {
     state.wait = null;
     if (!order) goHome();
     else if (order.kind === 'cad') openCad(order.id);
-    else openDetail(findOrder(order.id) || orderFromJob(order), { fresh: true });
+    else openDetail(findOrder(order.id) || orderFromJob(order, j), { fresh: true });
   } else {
     toast('✅ Готово: ' + title);
   }

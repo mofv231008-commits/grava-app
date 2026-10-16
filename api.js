@@ -46,6 +46,17 @@ async function fetchWithTimeout(url, ms, outerSignal, init) {
 
 const isAuth = (status, data) => status === 401 || status === 403 || !!(data && data.error === 'auth');
 
+// POST в grava-app-job: тело payload=<JSON>, тип form-urlencoded — без preflight.
+async function postJob(data, timeoutMs) {
+  const json = JSON.stringify(Object.assign({}, data, authParams()));
+  const body = new Blob(['payload=' + encodeURIComponent(json)], { type: 'application/x-www-form-urlencoded' });
+  const res = await fetchWithTimeout(JOB_API, timeoutMs, null, { method: 'POST', body });
+  let out = null;
+  try { out = await res.json(); } catch (e) { /* не JSON */ }
+  if (isAuth(res.status, out)) throw new ApiError('auth');
+  return { res, out };
+}
+
 async function api(params, timeoutMs) {
   if (MOCK) return mockGet(params);
   const res = await fetchWithTimeout(apiUrl(params), timeoutMs || 20000);
@@ -78,16 +89,20 @@ const Api = {
 
   me: () => api({ a: 'me' }),
 
-  // Новый заказ. Тело — payload=<JSON>, тип form-urlencoded: тоже без preflight.
+  // Новый заказ. data.project — проект (без него сервер заведёт новый). Ответ: { ok, job_id, project }.
   async createJob(data) {
     if (MOCK) return mockCreate(data);
-    const json = JSON.stringify(Object.assign({}, data, authParams()));
-    const body = new Blob(['payload=' + encodeURIComponent(json)], { type: 'application/x-www-form-urlencoded' });
-    const res = await fetchWithTimeout(JOB_API, 90000, null, { method: 'POST', body });
-    let out = null;
-    try { out = await res.json(); } catch (e) { /* не JSON */ }
-    if (isAuth(res.status, out)) throw new ApiError('auth');
+    const { res, out } = await postJob(data, 90000);
     if (!out || out.ok !== true || !out.job_id) throw new ApiError((out && out.error) || 'http_' + res.status, out);
+    return out;
+  },
+
+  // Уточняющие вопросы перед заказом, бесплатно: { prompt, mode: laser|sketch|flexi|cad, has_photo }.
+  // Ответ: { ok, ready, questions: [{ q, options }] }. Ждём не дольше 15 секунд.
+  async clarify(data) {
+    if (MOCK) return mockClarify(data);
+    const { res, out } = await postJob(Object.assign({ kind: 'clarify' }, data), 15000);
+    if (!out || out.ok !== true) throw new ApiError((out && out.error) || 'http_' + res.status, out);
     return out;
   },
 
@@ -178,11 +193,14 @@ function mockState() {
         packs: [{ id: 'p10', credits: 10, stars: 200 }, { id: 'p30', credits: 30, stars: 500 }],
         one_model: { id: 'one', stars: 100 },
         drafts: { sketch: 'v1', drawing: 'v1' },
+        // project: '' — старые работы, до проектов (в списке они в «Ранее»)
         orders: [
-          { id: 'o5', kind: 'sketch', sketch: true, mode: '3d_flexi', '3d_flexi': true, title: 'Ящерица', date: day(0), has_preview: true, has_file: false, editable: true },
-          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true },
-          { id: 'o3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', size_mm: 150, date: day(2), has_file: true, has_preview: true, editable: true },
-          { id: 'o2', kind: 'cad', mode: 'cad', title: 'Пластина 50×30×3', date: day(3), has_file: false, has_preview: false },
+          { id: 'o5', kind: 'sketch', sketch: true, mode: '3d_flexi', '3d_flexi': true, title: 'Ящерица', date: day(0), has_preview: true, has_file: false, editable: true, project: '', prompt: 'Ящерица на шарнирах, лапы в стороны' },
+          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '' },
+          { id: 'o3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', size_mm: 150, date: day(2), has_file: true, has_preview: true, editable: true, project: '', prompt: 'Волк воет на луну' },
+          { id: 'o2', kind: 'cad', mode: 'cad', title: 'Пластина 50×30×3', date: day(3), has_file: false, has_preview: false, project: '', prompt: 'Пластина 50×30×3, два отверстия 5 мм' },
+          { id: 'o12', kind: 'laser', mode: 'laser', title: 'Ключница-домик', size_mm: 200, date: day(4), has_file: true, has_preview: true, editable: true, project: 'p_demo1', prompt: 'добавь ещё два крючка' },
+          { id: 'o11', kind: 'laser', mode: 'laser', title: 'Ключница-домик', size_mm: 200, date: day(4.1), has_file: true, has_preview: true, editable: true, project: 'p_demo1', prompt: 'Ключница в виде домика с крышей, 4 крючка' },
         ],
       },
     };
@@ -226,10 +244,28 @@ async function mockCreate(data) {
   await mockWait(350);
   const db = mockState();
   if (!MOCK_ORDER_KIND[data.kind]) throw new ApiError('kind');
+  if (data.project != null && !/^[A-Za-z0-9_-]{1,40}$/.test(data.project)) throw new ApiError('project');
+  // как настоящий сервер: правка и 3D из эскиза — в проект исходной работы; без проекта — новый
+  const base = data.base_order ? db.me.orders.find((x) => x.id === data.base_order) : null;
+  const project = (base && base.project) || data.project || 'p' + (++db.seq) + Math.random().toString(36).slice(2, 6);
   const job = 'j' + (++db.seq);
-  db.jobs[job] = { data: Object.assign({}, data, { images: (data.images || []).length }), polls: 0, started: Date.now() };
+  db.jobs[job] = { data: Object.assign({}, data, { images: (data.images || []).length, project }), polls: 0, started: Date.now() };
   mockSave();
-  return { ok: true, job_id: job };
+  return { ok: true, job_id: job, project };
+}
+
+// Уточнение: короткий запрос — пример про змею, длинный (от 15 символов) — уже понятно.
+async function mockClarify(data) {
+  await mockWait(1200);
+  if (String(data.prompt || '').trim().length >= 15) return { ok: true, ready: true, questions: [] };
+  return {
+    ok: true,
+    ready: false,
+    questions: [
+      { q: 'Какая змея?', options: ['Кобра', 'Питон', 'Гадюка', 'Мультяшная'] },
+      { q: 'Стиль?', options: ['Реалистичный', 'Мультяшный', 'Геометричный'] },
+    ],
+  };
 }
 
 // Списываем, как настоящий сервер: бесплатные → подарки → кредиты. false — не хватило.
@@ -261,7 +297,7 @@ function mockStatus(id) {
   if (!j) throw new ApiError('not_found');
   const d = j.data;
   const seconds = Math.round((Date.now() - j.started) / 1000);
-  const base = { ok: true, job_id: id, kind: d.kind, seconds };
+  const base = { ok: true, job_id: id, kind: d.kind, project: d.project || '', seconds };
   j.polls++;
   mockSave();
   if (j.polls < 3) return Object.assign(base, { status: 'running', text: '' });
@@ -297,6 +333,8 @@ function mockOrder(db, d) {
     has_preview: kind !== 'cad',
     has_file: kind === 'laser' || kind === 'model',
     editable: kind === 'laser' || kind === 'sketch',
+    project: d.project || '',
+    prompt: d.prompt || '',
   };
   if (kind === 'sketch') {
     o.sketch = true;

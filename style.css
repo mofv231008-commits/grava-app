@@ -870,6 +870,21 @@ button {
   text-overflow: ellipsis;
 }
 .work-meta.is-wrap { white-space: normal; }
+.work-project {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 26px;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+}
+.work-project .i { width: 13px; height: 13px; }
+.work-project span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
+.work-project:active { color: var(--text); }
 .work-badge {
   position: absolute;
   left: 6px;
@@ -1396,16 +1411,68 @@ body.no-scroll { overflow: hidden; }
 .wait-actions { display: grid; gap: 10px; width: 100%; margin-top: 28px; }
 .wait-note { text-align: center; }
 
-/* ---------- «Создать»: приветствие и лента ---------- */
-.view-create { padding-bottom: calc(var(--composer-h) + var(--tabbar-h) + var(--safe-bottom) + 24px); }
+/* ---------- «Создать»: шапка проекта, приветствие и лента ---------- */
+.view-create { padding-top: 0; padding-bottom: calc(var(--composer-h) + var(--tabbar-h) + var(--safe-bottom) + 24px); }
 body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) + 24px); }
-.hello { padding: 8px 2px 0; }
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  margin: 0 -10px;
+  padding: 0 2px;
+  background: var(--bg);
+}
+/* лента уходит под шапку плавно, без резкой границы */
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+  background: linear-gradient(var(--bg), transparent);
+  pointer-events: none;
+}
+.topbar-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--text);
+  transition: background-color .15s ease;
+}
+.icon-btn .i { width: 22px; height: 22px; }
+.icon-btn:active { background: var(--surface-2); }
+@media (hover: hover) { .icon-btn:hover { background: var(--surface-2); } }
+.hello { padding: 12px 2px 0; }
 .hello .logo { margin-bottom: 16px; }
 .hello-title { font-family: var(--serif); font-size: 26px; font-weight: 500; line-height: 1.25; letter-spacing: -.2px; }
 .hello-sub { margin-top: 6px; font-size: 13px; color: var(--text-2); }
 .hello-sub button { color: inherit; font-size: inherit; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
 
 .feed { display: flex; flex-direction: column; gap: 12px; margin-top: 24px; }
+.hello[hidden] + .feed { margin-top: 12px; }
+.feed-ask { margin-top: 12px; }
+.feed-ask:empty { display: none; }
 .msg { display: flex; animation: msg-in .2s var(--ease); }
 @keyframes msg-in { from { opacity: 0; transform: translateY(4px); } }
 .msg-me { justify-content: flex-end; }
@@ -1525,6 +1592,138 @@ body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) +
 .example:active { transform: scale(.98); }
 .example > .i { color: var(--text-2); }
 .example small { display: block; margin-top: 1px; color: var(--text-2); font-size: 13px; }
+
+/* ---------- Уточняющие вопросы ---------- */
+.ask-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 15px;
+}
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-2); animation: dot 1.2s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: .15s; }
+.dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot { 0%, 70%, 100% { opacity: .3; transform: none; } 35% { opacity: 1; transform: translateY(-3px); } }
+
+.ask { padding: 14px; }
+.ask-head { display: flex; align-items: center; gap: 8px; font-family: var(--serif); font-size: 17px; font-weight: 600; line-height: 1.3; }
+.ask-head .i { width: 18px; height: 18px; color: var(--accent-text); }
+.ask-q { margin-top: 14px; }
+.ask-q-text { margin-bottom: 8px; font-size: 15px; font-weight: 600; line-height: 1.35; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 6px 13px;
+  border-radius: 17px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+  overflow-wrap: anywhere; /* длинный вариант переносится внутри чипса, а не вылезает за край */
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.ask-chip .i { width: 15px; height: 15px; }
+.ask-chip.is-own { color: var(--text-2); }
+.ask-chip.is-active { background: var(--text); border-color: var(--text); color: var(--bg); }
+.ask-chip:active { opacity: .7; }
+.ask-chip:disabled { cursor: default; }
+.ask-own { display: flex; flex: 1 1 150px; min-width: 0; max-width: 100%; }
+.ask-own input {
+  width: 100%;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 17px;
+  border: 1px solid var(--text-2);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+.ask-own input:focus { border-color: var(--text); }
+.ask-own input::placeholder { color: var(--text-2); }
+.ask-foot { display: flex; flex-direction: column; align-items: stretch; gap: 2px; margin-top: 16px; }
+.ask-go { min-height: 44px; white-space: nowrap; }
+.ask-skip { align-self: center; min-height: 40px; padding: 0 16px; white-space: nowrap; }
+.ask.is-sending .ask-opts { opacity: .6; }
+@media (hover: hover) { .ask-chip:not(.is-active):not(:disabled):hover { background: var(--surface-2); } }
+
+/* свёрнутая карточка вопросов: «Кобра · Мультяшный» */
+.ask-done { display: inline-flex; align-items: flex-start; gap: 6px; max-width: 100%; padding: 0 4px; font-size: 13.5px; line-height: 1.4; color: var(--text-2); }
+.ask-done .i { width: 16px; height: 16px; margin-top: 1px; color: var(--accent-text); }
+.ask-done span { overflow-wrap: anywhere; }
+.msg-line + .msg { margin-top: -4px; }
+
+/* пока пишут свой вариант в карточке — композер и вкладки не закрывают поле над клавиатурой */
+body.ask-typing .composer, body.ask-typing .tabbar { visibility: hidden; }
+
+/* ---------- Проекты: боковая панель ---------- */
+.drawer { position: fixed; inset: 0; z-index: 28; }
+.drawer-scrim { position: absolute; inset: 0; background: var(--overlay); opacity: 0; transition: opacity .25s ease; }
+.drawer-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(320px, 86vw);
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(var(--safe-bottom) + 16px);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-100%);
+  transition: transform .25s var(--ease);
+}
+.drawer.is-open .drawer-scrim { opacity: 1; }
+.drawer.is-open .drawer-panel { transform: none; }
+body.drawer-open.has-backbtn #app { padding-top: 0; }
+.drawer-head { display: flex; align-items: center; gap: 10px; padding-left: 4px; }
+.drawer-title { flex: 1; font-family: var(--serif); font-size: 22px; font-weight: 600; line-height: 1.25; }
+.drawer-head .icon-btn { margin-right: -6px; }
+.proj-list { display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; }
+.proj {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  transition: background-color .15s ease;
+}
+.proj:active, .proj.is-active { background: var(--surface-2); }
+@media (hover: hover) { .proj:hover { background: var(--surface-2); } }
+.proj-thumb { width: 44px; flex-shrink: 0; border-radius: 10px; }
+.proj-thumb .placeholder .i { width: 50%; height: 50%; }
+.proj-info { flex: 1; min-width: 0; }
+.proj-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.proj-meta { margin-top: 1px; font-size: 13px; color: var(--text-2); }
+.proj-empty { padding: 4px 4px 0; font-size: 13px; color: var(--text-2); }
 
 /* ---------- Композер ---------- */
 .composer {
@@ -1668,6 +1867,7 @@ body.kb-open .tabbar { display: none; }
 .composer-send {
   position: relative;
   display: flex;
+  margin-left: auto; /* в правке и при ответе на вопросы режимов нет — кнопка всё равно справа */
   align-items: center;
   justify-content: center;
   width: 36px;
@@ -1746,6 +1946,8 @@ body.has-backbtn #app { padding-top: 44px; }
 
 @media (prefers-reduced-motion: reduce) {
   .view, .msg { animation: none; }
+  .dots i { animation-duration: 3s; }
+  .drawer-panel, .drawer-scrim { transition: none; }
   .wait-ring { animation-duration: 10s; }
   .wait-core, .job.is-running .result-thumb::after { animation: none; }
   .job-line::after { animation-duration: 4s; }

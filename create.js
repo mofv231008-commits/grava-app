@@ -9,7 +9,6 @@ const PROMPT_MAX = 1500;
 const DRAFT_USED_KEY = 'grava.draftUsed';
 const LAST_MODE_KEY = 'grava.lastMode';
 const MAX_PHOTOS = 6;
-const FEED_SIZE = 10;
 const COMPOSER_MAX_H = 6 * 24 + 16; // 6 строк
 
 const FORMS = {
@@ -190,6 +189,7 @@ async function loadChatDraft() {
   // человек уже что-то пишет — не затираем, подставим в следующий раз
   if ($('composer-input').value.trim() || comp.photos.length || comp.busyPhotos || comp.edit) return;
 
+  projOpen(null); // черновик из Telegram — всегда новый проект
   comp.fromDraft = at;
   $('composer-input').value = text;
   comp.manual = false;
@@ -223,12 +223,24 @@ function orderCreated(s) {
 
 /* ---------- Композер ---------- */
 
+// Уточняющие вопросы в этом проекте: пока они есть, композер отвечает на них.
+function composerAsk() {
+  const a = askCurrent();
+  return a && !comp.edit && !comp.photos.length && !comp.busyPhotos ? a : null;
+}
+
 // Что уйдёт при отправке и можно ли отправлять.
 function composerPlan() {
   const text = $('composer-input').value.trim();
   const n = comp.photos.length;
   if (comp.busyPhotos) return { kind: comp.edit ? editKind(comp.edit) : null, ok: false, hint: 'Фото ещё обрабатывается…' };
   if (comp.edit) return { kind: editKind(comp.edit), ok: !!text, hint: '' };
+  const a = composerAsk();
+  if (a) {
+    return a.status === 'questions'
+      ? { kind: a.kind, ok: !!text, hint: '', answer: true } // текст — «Свой вариант» для всех вопросов
+      : { kind: a.kind, ok: false, hint: '', wait: true };   // думаю над вопросами или уже отправляю
+  }
   const first = n > 1 ? 'Возьму первое фото' : '';
   switch (comp.mode) {
     case 'laser':
@@ -313,13 +325,15 @@ function renderComposer() {
   }
   box.hidden = !comp.photos.length && !comp.busyPhotos;
 
+  const plan = composerPlan();
+  const plain = !comp.edit && !plan.answer && !plan.wait; // обычный новый заказ: режимы, скрепка, опции
   const input = $('composer-input');
   input.placeholder = comp.edit
     ? 'Что изменить в «' + (comp.edit.title || 'работе') + '»?'
-    : COMPOSER_PLACEHOLDER;
+    : plan.answer ? 'Или напиши свой вариант…' : COMPOSER_PLACEHOLDER;
 
-  $('composer-modes').hidden = !!comp.edit;
-  $('composer-clip').hidden = !!comp.edit;
+  $('composer-modes').hidden = !plain;
+  $('composer-clip').hidden = !plain;
   document.querySelectorAll('#composer-modes .mode').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.mode === comp.mode);
     b.setAttribute('aria-pressed', b.dataset.mode === comp.mode ? 'true' : 'false');
@@ -330,9 +344,9 @@ function renderComposer() {
   const opts = $('composer-opts');
   opts.textContent = '';
   let choices = null;
-  if (!comp.edit && comp.mode === 'cad') {
+  if (plain && comp.mode === 'cad') {
     choices = { label: 'Формат:', key: 'format', items: [['stl', 'Печать'], ['dxf', 'Лазер'], ['', 'Сам реши']] };
-  } else if (!comp.edit && comp.mode === 'laser' && comp.photos.length) {
+  } else if (plain && comp.mode === 'laser' && comp.photos.length) {
     choices = { label: 'Фото:', key: 'photoMode', items: [['redraw', 'Перерисовать'], ['trace', 'Обвести как есть']] };
   }
   if (choices) {
@@ -351,14 +365,14 @@ function renderComposer() {
   }
   opts.hidden = !choices;
 
-  const plan = composerPlan();
   $('composer-hint').textContent = plan.hint;
   $('composer-hint').hidden = !plan.hint;
-  $('composer-about').textContent = comp.edit ? 'изменение описанием' : MODES[comp.mode].about;
+  $('composer-about').textContent = comp.edit ? 'изменение описанием'
+    : plan.answer ? 'ответ на вопросы выше' : plan.wait ? 'думаю над запросом' : MODES[comp.mode].about;
   $('composer-price').textContent = plan.kind ? shortPrice(plan.kind) : '';
   const send = $('composer-send');
   send.disabled = !plan.ok || comp.sending;
-  send.classList.toggle('is-busy', comp.sending);
+  send.classList.toggle('is-busy', comp.sending || !!plan.wait);
   composerAutosize();
 }
 
@@ -408,12 +422,13 @@ function composerDropDraft() {
   markDraftUsed(at);
 }
 
-// Открыть композер в нужном режиме (например, с плашки «первая модель в подарок»).
+// Открыть композер в нужном режиме в новом проекте (например, с плашки «первая модель в подарок»).
 function composerStart(mode, text) {
   state.order = null;
   state.detail = null;
   state.wait = null;
   if (state.cad) closeCad();
+  projOpen(null);
   if (mode && MODES[mode]) {
     comp.mode = mode;
     comp.manual = true;
@@ -464,6 +479,12 @@ async function composerSend() {
   if (!plan.ok || comp.sending || state.creating) return;
   haptic();
   const text = $('composer-input').value.trim().slice(0, PROMPT_MAX);
+  if (plan.answer) {
+    $('composer-input').value = '';
+    renderComposer();
+    askAnswerTyped(askCurrent(), text);
+    return;
+  }
   const data = { kind: plan.kind };
   let title;
   if (comp.edit) {
@@ -497,10 +518,21 @@ async function composerSend() {
   comp.edit = null;
   comp.fromDraft = null;
   if (!sent.manual) guessMode();
+
+  // Новый заказ по короткому тексту — сначала уточняющие вопросы (ask.js).
+  if (askNeeded(data)) {
+    askStart(data, title, sent);
+    return;
+  }
   comp.sending = true;
   renderComposer();
   const ok = await startJob(data, title, 'inline');
   comp.sending = false;
+  composerSent(ok, sent);
+}
+
+// Заказ из композера ушёл или нет. Не ушёл — возвращаем текст и фото, если человек ещё ничего нового не начал.
+function composerSent(ok, sent) {
   if (ok) {
     if (sent.fromDraft) markDraftUsed(sent.fromDraft);
     if (!sent.edit) saveLastMode(sent.mode);
@@ -704,6 +736,8 @@ function composerFromJob(j) {
   haptic();
   const d = j.data || {};
   jobRemove(j);
+  const p = j.project || OLD_PROJECT;
+  if (p !== proj.current) projOpen(p); // поправить запрос — в его же проекте
   comp.edit = null;
   comp.fromDraft = null;
   comp.photos = (d.images || []).slice();
@@ -751,28 +785,39 @@ function examplesBlock() {
 
 let feedKey = '';
 
+// Лента открытого проекта: облачко запроса справа → карточка результата слева.
 function renderFeed() {
   const box = $('feed');
   if (!box) return;
-  const orders = ((state.me && state.me.orders) || []).slice(0, FEED_SIZE).reverse(); // старые сверху, как в переписке
-  const list = jobs.list.slice().reverse();
-  const key = JSON.stringify([state.me ? 1 : 0, orders, list.map((j) => [j.id, j.status, j.text, (j.thumbs || []).length]), jobPrice('model')]);
+  const p = proj.current !== null ? projectGet(proj.current) : null;
+  const orders = p ? p.orders.slice(0, PROJECT_FEED_MAX).reverse() : []; // старые сверху, как в переписке
+  const list = p ? p.jobs.slice().reverse() : [];
+  const a = askCurrent();
+  const empty = !orders.length && !list.length && !a;
+  const key = JSON.stringify([viewKey(), state.me ? 1 : 0, a ? a.id : 0, orders, list.map((j) => [j.id, j.status, j.text, (j.thumbs || []).length]), jobPrice('model')]);
   if (key !== feedKey) {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
     feedKey = key;
     box.textContent = '';
     orders.forEach((o) => {
       const req = savedPrompt(o.id);
-      box.appendChild(bubble(req && req.prompt ? req.prompt : o.title || '', req && req.thumbs, req && req.photos));
+      const ask = req && req.ask;
+      box.appendChild(bubble(ask ? ask.text : (req && req.prompt) || o.prompt || o.title || '', req && req.thumbs, req && req.photos));
+      if (ask && ask.answers) box.appendChild(askDoneLine(ask.answers));
       box.appendChild(resultCard(o));
     });
     list.forEach((j) => {
-      box.appendChild(bubble(j.data.prompt || (j.photos ? '' : j.title), j.thumbs || (j.data.images || []).slice(0, 6), j.photos));
+      box.appendChild(bubble(j.ask ? j.ask.text : j.data.prompt || (j.photos ? '' : j.title), j.thumbs || (j.data.images || []).slice(0, 6), j.photos));
+      if (j.ask && j.ask.answers) box.appendChild(askDoneLine(j.ask.answers));
       box.appendChild(jobCard(j));
     });
-    if (state.me && !orders.length && !list.length) box.appendChild(examplesBlock());
+    if (state.me && empty) box.appendChild(examplesBlock());
     if (nearBottom && state.createOpen) feedToBottom(false);
   }
+  $('hello').hidden = !empty; // приветствие — только у пустого проекта
+  renderAsk();
+  renderTopbar();
+  if (proj.drawer) renderDrawer();
   jobsSyncTicker();
 }
 
