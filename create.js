@@ -114,9 +114,12 @@ function shortTitle(text) {
   return (sp > 20 ? cut.slice(0, sp) : cut) + '…';
 }
 
+// Подвижная не запоминается: включается только тапом по чипу (или примером «Ящерица на шарнирах»).
+// Иначе режим «залипает» — человек пишет «дракона», не глядя на чип, и получает фигурку из звеньев.
 function lastMode() {
   try {
     const m = localStorage.getItem(LAST_MODE_KEY);
+    if (m === 'flexi') return '3d'; // запомнили раньше, до этого правила
     if (m && m !== 'scan' && MODES[m]) return m;
   } catch (e) { /* приватный режим */ }
   return 'laser';
@@ -124,7 +127,17 @@ function lastMode() {
 
 function saveLastMode(m) {
   if (m === 'scan') return; // скан выбирается по фото
-  try { localStorage.setItem(LAST_MODE_KEY, m); } catch (e) { /* ок */ }
+  try { localStorage.setItem(LAST_MODE_KEY, m === 'flexi' ? '3d' : m); } catch (e) { /* ок */ }
+}
+
+// В тексте просят обычную фигурку — подвижная выбрана по ошибке. Но «подвижный только хвост» — это подвижная.
+// Без \w: в JS он не ловит кириллицу.
+const STATIC_RE = /неподвиж|не\s+(нужно\s+|надо\s+)?подвиж|(^|[^а-яё])обычн|(^|[^а-яё])цельн|статичн|статуэтк/;
+const TAIL_ONLY_RE = /только\s+хвост|хвост\S*\s+подвижн|подвижн\S*\s+(только\s+)?хвост/;
+
+function wantsStatic(text) {
+  const t = String(text || '').toLowerCase().replace(/ё/g, 'е');
+  return STATIC_RE.test(t) && !TAIL_ONLY_RE.test(t);
 }
 
 // Цена под композером, отдельным словом: «1 кредит», «Бесплатно», «Бесплатно (подарок)», «Оплачено».
@@ -328,6 +341,9 @@ function renderComposer() {
 
   const plan = composerPlan();
   const plain = !comp.edit && !plan.answer && !plan.wait; // обычный новый заказ: режимы, скрепка, опции
+  // подвижная выбрана — видно сразу: подпись на кнопке (она встаёт отдельной строкой) и заметная строка под полем
+  const flexi = plain && comp.mode === 'flexi';
+  $('composer-row').classList.toggle('is-wrap', flexi);
   const input = $('composer-input');
   input.placeholder = comp.edit
     ? 'Что изменить в «' + (comp.edit.title || 'работе') + '»?'
@@ -368,12 +384,15 @@ function renderComposer() {
 
   $('composer-hint').textContent = plan.hint;
   $('composer-hint').hidden = !plan.hint;
+  $('composer-flexi').hidden = !flexi; // вместо мелкой подсказки под чипсами
   $('composer-about').textContent = comp.edit ? 'изменение описанием'
-    : plan.answer ? 'ответ на вопросы выше' : plan.wait ? 'думаю над запросом' : MODES[comp.mode].about;
+    : plan.answer ? 'ответ на вопросы выше' : plan.wait ? 'думаю над запросом' : flexi ? '' : MODES[comp.mode].about;
   $('composer-price').textContent = plan.kind ? shortPrice(plan.kind) : '';
   const send = $('composer-send');
   send.disabled = !plan.ok || comp.sending;
   send.classList.toggle('is-busy', comp.sending || !!plan.wait);
+  send.classList.toggle('is-labeled', flexi);
+  send.setAttribute('aria-label', flexi ? 'Создать подвижную' : 'Отправить');
   composerAutosize();
 }
 
@@ -518,7 +537,13 @@ async function composerSend() {
   comp.photos = [];
   comp.edit = null;
   comp.fromDraft = null;
-  if (!sent.manual) guessMode();
+  if (sent.mode === 'flexi') {
+    // подвижная — на один заказ: следующий снова обычный, пока не тапнут чип
+    comp.mode = '3d';
+    comp.manual = false;
+  } else if (!sent.manual) {
+    guessMode();
+  }
 
   // Новый заказ по короткому тексту — сначала уточняющие вопросы (ask.js).
   if (askNeeded(data)) {
@@ -1206,7 +1231,15 @@ function bindCreate() {
 
 function bindComposer() {
   const input = $('composer-input');
-  input.addEventListener('input', () => renderComposer());
+  input.addEventListener('input', () => {
+    // «обычный дракон» при выбранной подвижной — переключаем сами
+    if (comp.mode === 'flexi' && !comp.edit && wantsStatic(input.value)) {
+      comp.mode = '3d';
+      comp.manual = true;
+      toast('Переключил на обычную 3D-фигурку');
+    }
+    renderComposer();
+  });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -1222,6 +1255,13 @@ function bindComposer() {
       comp.manual = true;
       renderComposer();
     });
+  });
+  $('composer-flexi-off').addEventListener('click', () => {
+    haptic();
+    comp.mode = '3d';
+    comp.manual = true;
+    renderComposer();
+    input.focus();
   });
   $('composer-clip').addEventListener('click', () => {
     haptic();

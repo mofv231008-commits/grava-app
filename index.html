@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=19">
+  <link rel="stylesheet" href="style.css?v=20">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -509,9 +509,15 @@
       <div class="composer-tags" id="composer-tags"></div>
       <div class="composer-photos" id="composer-photos" hidden></div>
       <textarea class="composer-input" id="composer-input" rows="1" maxlength="1500" placeholder="Опиши, что нужно сделать…" aria-label="Что нужно сделать"></textarea>
+      <!-- выбрана подвижная: видно сразу и можно вернуть обычную -->
+      <div class="composer-flexi" id="composer-flexi" hidden>
+        <svg class="i" aria-hidden="true"><use href="#i-joint"/></svg>
+        <span>Подвижная на шарнирах — тело будет из звеньев</span>
+        <button type="button" id="composer-flexi-off">Сделать обычной</button>
+      </div>
       <div class="composer-opts" id="composer-opts" hidden></div>
       <p class="composer-hint" id="composer-hint" hidden></p>
-      <div class="composer-row">
+      <div class="composer-row" id="composer-row">
         <button class="composer-clip" id="composer-clip" type="button" aria-label="Прикрепить фото"><svg class="i" aria-hidden="true"><use href="#i-clip"/></svg></button>
         <div class="composer-modes" id="composer-modes">
           <button class="mode" type="button" data-mode="laser"><svg class="i" aria-hidden="true"><use href="#i-laser"/></svg><span>Лазер</span></button>
@@ -520,7 +526,7 @@
           <button class="mode" type="button" data-mode="cad"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Деталь</span></button>
           <button class="mode" type="button" data-mode="scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span>По фото</span></button>
         </div>
-        <button class="composer-send" id="composer-send" type="button" aria-label="Отправить" disabled><svg class="i" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button class="composer-send" id="composer-send" type="button" aria-label="Отправить" disabled><span class="composer-send-label">Создать подвижную</span><svg class="i" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
       </div>
       <!-- что делает выбранный режим и сколько стоит -->
       <div class="composer-sub"><span class="composer-about" id="composer-about"></span><span class="composer-price" id="composer-price"></span></div>
@@ -583,7 +589,7 @@
   <script src="api.js?v=7"></script>
   <script src="app.js?v=15"></script>
   <script src="jobs.js?v=5"></script>
-  <script src="create.js?v=7"></script>
+  <script src="create.js?v=8"></script>
   <script src="projects.js?v=1"></script>
   <script src="ask.js?v=1"></script>
   <script src="editor.js?v=10"></script>
