@@ -118,6 +118,12 @@ const Api = {
 
   flexi: (id) => api({ a: 'flexi', id }),
 
+  // «Идеи»: до 60 работ, которые авторы показали всем. { ok, admin, items: [{ id, kind, mode, title, prompt, date, mine, … }] }
+  gallery: () => api({ a: 'gallery' }),
+
+  // Показать (on) или спрятать свою работу в «Идеях»; админ может спрятать любую. { ok, id, public }
+  share: (id, on) => api({ a: 'share', id, on: on ? 1 : 0 }),
+
   // Черновик из чата: бот больше не принимает заказы, а сохраняет текст и фото сюда.
   // { draft: { text, photos, at, age_sec } } или { draft: null }.
   chatDraft: () => api({ a: 'chatdraft' }),
@@ -199,7 +205,7 @@ function mockState() {
           { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false,
             notes: [
               { level: 'warn', code: 'tips', text: 'Фигурка может упасть: центр тяжести не над опорой' },
-              { level: 'info', code: 'small_foot', text: 'Опора маленькая — включи в слайсере кайму (brim)' },
+              { level: 'info', code: 'small_foot', text: 'Опора маленькая — включи кайму в программе для печати' },
             ] },
           { id: 'o3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', size_mm: 150, date: day(2), has_file: true, has_preview: true, editable: true, project: '', prompt: 'Волк воет на луну' },
           { id: 'o2', kind: 'cad', mode: 'cad', title: 'Пластина 50×30×3', date: day(3), has_file: false, has_preview: false, project: '', prompt: 'Пластина 50×30×3, два отверстия 5 мм' },
@@ -236,6 +242,29 @@ async function mockGet(params) {
     return { ok: true, id: o.id, title: o.title, format: 'stl', flexi: o.flexi === true ? true : o.flexi === false ? false : undefined };
   }
   if (params.a === 'send') return { ok: true };
+  // «Идеи»: 4 работы других людей и свои показанные; ?mock=1&admin=1 — как у админа
+  if (params.a === 'gallery') {
+    const mine = db.me.orders.filter((o) => o.public === true).map((o) => ({
+      id: o.id, kind: o.kind, mode: o.mode, title: o.title, prompt: o.prompt || '', date: o.date, mine: true,
+      jointed: o.jointed === true, litho: o.litho || '', '3d_flexi': o['3d_flexi'] === true, cad: o.cad === true || o.kind === 'cad',
+    }));
+    const others = MOCK_GALLERY.filter((x) => !(db.galleryOff || []).includes(x.id));
+    return { ok: true, admin: /[?&]admin=1/.test(location.search), items: mockCopy(mine.concat(others)) };
+  }
+  if (params.a === 'share') {
+    const o = db.me.orders.find((x) => x.id === String(params.id));
+    const on = String(params.on) === '1';
+    if (o) {
+      if (on && !o.has_preview) throw new ApiError('no_preview', { ok: false, error: 'no_preview', text: 'У работы нет картинки' });
+      o.public = on;
+    } else if (MOCK_GALLERY.some((x) => x.id === params.id) && !on && /[?&]admin=1/.test(location.search)) {
+      db.galleryOff = (db.galleryOff || []).concat(params.id);
+    } else {
+      throw new ApiError('not_found');
+    }
+    mockSave();
+    return { ok: true, id: params.id, public: on };
+  }
   if (params.a === 'cad') {
     const o = db.me.orders.find((x) => x.id === params.id);
     if (!o) throw new ApiError('not_found');
@@ -288,6 +317,14 @@ async function mockPost(url, params) {
   return { status: 200, data: { ok: true } };
 }
 const mockSnapshots = {};
+
+// Чужие показанные работы для «Идей»
+const MOCK_GALLERY = [
+  { id: 'g1', kind: 'sketch', mode: '3d', title: 'Дракон на скале', prompt: 'Дракон сидит на скале, крылья раскрыты, хвост свисает вниз', date: '2026-10-15T10:00:00Z', mine: false },
+  { id: 'g2', kind: 'model', mode: '3d_flexi', '3d_flexi': true, jointed: true, title: 'Ящерица на шарнирах', prompt: 'Ящерица на шарнирах, лапы в стороны, хвост длинный', date: '2026-10-14T10:00:00Z', mine: false },
+  { id: 'g3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', prompt: 'Волк воет на луну, тонкие линии, для гравировки на доске', date: '2026-10-13T10:00:00Z', mine: false },
+  { id: 'g4', kind: 'model', mode: 'litho', litho: 'litho', title: 'Литофания: маяк', prompt: '', date: '2026-10-12T10:00:00Z', mine: false },
+];
 
 async function mockCreate(data) {
   await mockWait(350);
@@ -411,7 +448,7 @@ const MOCK_EMOJI = { sketch: '✏️', model: '🧊', laser: '🔥', cad: '📐'
 
 function mockFileUrl(id) {
   if (mockSnapshots[id]) return mockSnapshots[id];
-  const o = mockState().me.orders.find((x) => x.id === String(id)) || { kind: 'laser', title: '?' };
+  const o = mockState().me.orders.find((x) => x.id === String(id)) || MOCK_GALLERY.find((x) => x.id === String(id)) || { kind: 'laser', title: '?' };
   const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'
     + '<rect width="512" height="512" fill="' + (MOCK_COLORS[o.kind] || '#eee') + '"/>'

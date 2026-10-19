@@ -29,6 +29,8 @@ const state = {
   flexiBusy: false,
   litho: null,      // открытый экран «Литофания или барельеф» (litho.js)
   lithoBusy: false,
+  idea: null,       // открытая карточка из «Идей» (gallery.js)
+  galleryOpen: false,
 };
 
 function sessionExpired() {
@@ -290,6 +292,7 @@ function topScreen() {
   if (state.wait) return 'wait';
   if (state.order) return 'order';
   if (state.detail) return 'detail';
+  if (state.idea) return 'idea';
   return null;
 }
 
@@ -297,10 +300,11 @@ function renderView() {
   const inApp = !$('app').hidden;
   const top = topScreen();
   const overlay = !!top;
-  ['create', 'works', 'balance', 'editor'].forEach((t) => {
+  ['create', 'works', 'gallery', 'balance', 'editor'].forEach((t) => {
     $('view-' + t).hidden = overlay || state.tab !== t;
   });
   $('view-detail').hidden = top !== 'detail';
+  $('view-idea').hidden = top !== 'idea';
   $('view-order').hidden = top !== 'order';
   $('view-wait').hidden = top !== 'wait';
   $('view-cad').hidden = top !== 'cad';
@@ -334,8 +338,16 @@ function renderView() {
     syncViewport();
   }
 
-  // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
-  const noSwipes = editorOpen || (inApp && (top === 'cad' || top === 'flexi' || top === 'litho'));
+  // «Идеи» открылись — список устарел больше 2 минут назад? обновим
+  const galleryOpen = inApp && !overlay && state.tab === 'gallery';
+  if (galleryOpen !== state.galleryOpen) {
+    state.galleryOpen = galleryOpen;
+    if (galleryOpen) galleryLoad(false);
+  }
+
+  // В редакторе рисуют пальцем, в конструкторе крутят 3D, в «Идеях» тянут вниз, чтобы обновить, —
+  // свайп вниз не должен сворачивать приложение.
+  const noSwipes = editorOpen || galleryOpen || (inApp && (top === 'cad' || top === 'flexi' || top === 'litho'));
   if (noSwipes !== state.noSwipes) {
     state.noSwipes = noSwipes;
     tg.swipes(!noSwipes);
@@ -355,6 +367,7 @@ function syncButtons() {
   let text = '';
   if (top === 'order') text = orderMainText();
   else if (top === 'detail') text = detailMainText(state.detail);
+  else if (top === 'idea') text = 'Сделать такую же';
   if (!text) {
     tg.MainButton.hide();
     return;
@@ -425,6 +438,16 @@ function workCard(o, names) {
   card.tabIndex = 0;
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
+  // меню карточки: «Показать в Идеях»
+  const more = el('button', 'work-more');
+  more.type = 'button';
+  more.appendChild(icon(o.public === true ? 'star' : 'more'));
+  more.setAttribute('aria-label', o.public === true ? 'Работа в Идеях — меню' : 'Меню работы');
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    workMenu(o);
+  });
+  thumb.appendChild(more);
   if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', 'на шарнирах'));
   else if (lithoKind(o)) thumb.appendChild(el('span', 'work-badge', lithoKind(o) === 'relief' ? 'барельеф' : 'литофания'));
   else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? 'эскиз · на шарнирах' : 'эскиз'));
@@ -599,6 +622,10 @@ function renderDetail() {
   syncBaseToggles();
   setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
+  // своя работа — показать всем в «Идеях» (без имени); у черновика детали картинки нет
+  $('detail-share').hidden = isCadDraft(o);
+  $('detail-share-input').checked = o.public === true;
+
   $('detail-sent').hidden = !state.detailFresh;
   // главная кнопка — не отправка (эскиз, подвижная модель) — «Отправить в Telegram» рядом, вторичной
   $('detail-send').hidden = !canSend(o) || detailMainText(o) === 'Отправить в Telegram';
@@ -661,6 +688,7 @@ function goBack() {
   else if (state.wait) closeWait();
   else if (state.order) closeOrder();
   else if (state.detail) closeDetail();
+  else if (state.idea) closeIdea();
 }
 
 // Одна кнопка Телеги на все экраны — что она делает, решает экран сверху.
@@ -671,6 +699,7 @@ function onMainButton() {
   else if (top === 'litho') lithoSave();
   else if (top === 'order') submitOrder();
   else if (top === 'detail') onDetailMain();
+  else if (top === 'idea') ideaUse();
 }
 
 function detailResize(mm) {
@@ -1445,6 +1474,7 @@ function bindEvents() {
   bindCad();
   bindFlexi();
   bindLitho();
+  bindGallery();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(onMainButton);

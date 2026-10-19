@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=24">
+  <link rel="stylesheet" href="style.css?v=26">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -43,6 +43,8 @@
     <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.6 4.6a1.6 1.6 0 0 1 2.8 0l7.6 13.2a1.6 1.6 0 0 1-1.4 2.4H4.4A1.6 1.6 0 0 1 3 17.8z"/><path d="M12 9.5v4.5M12 17v.1"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.9v.1"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.8 2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
     <symbol id="i-turn" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v4h-4"/></symbol>
     <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11.5 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-5.5"/><path d="m17.3 3.7 3 3-8.3 8.3-3.6.6.6-3.6z"/></symbol>
   </svg>
@@ -183,6 +185,39 @@
       </div>
     </section>
 
+    <!-- Вкладка «Идеи»: работы, которые авторы показали всем (gallery.js) -->
+    <section id="view-gallery" class="view" hidden>
+      <div class="gallery-pull" id="gallery-pull" hidden>Потяни, чтобы обновить</div>
+      <header class="page-head">
+        <h1>Идеи</h1>
+        <button class="icon-btn gallery-refresh" id="gallery-refresh" type="button" aria-label="Обновить"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+      </header>
+      <p class="gallery-lead">Работы, которые другие показали всем. Понравилась — нажми и сделай такую же</p>
+      <div class="gallery-loading" id="gallery-loading" hidden><div class="spinner"></div></div>
+      <div id="gallery-grid" class="grid"></div>
+      <div id="gallery-empty" class="empty" hidden>
+        <div class="empty-icon"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg></div>
+        <p>Пока здесь пусто. Покажи свою работу — нажми «Показать в Идеях» в её карточке</p>
+      </div>
+      <div id="gallery-error" class="empty" hidden>
+        <p id="gallery-error-text"></p>
+        <button class="btn btn-primary" id="gallery-retry" type="button">Попробовать ещё раз</button>
+      </div>
+    </section>
+
+    <!-- Большая карточка из «Идей»: «Сделать такую же» — главной кнопкой -->
+    <section id="view-idea" class="view" hidden>
+      <div class="detail-preview" id="idea-preview"></div>
+      <h1 class="detail-title" id="idea-title"></h1>
+      <div class="detail-meta" id="idea-meta"></div>
+      <div class="idea-prompt" id="idea-prompt-box" hidden>
+        <span class="idea-prompt-label">Что просили</span>
+        <p id="idea-prompt"></p>
+      </div>
+      <p class="note">«Сделать такую же» подставит этот запрос в поле — его можно поправить перед отправкой</p>
+      <button class="btn btn-secondary btn-wide idea-remove-btn" id="idea-remove" type="button" hidden>Убрать из Идей</button>
+    </section>
+
     <!-- Экран работы: и готовый результат, и работа из «Моих работ» -->
     <section id="view-detail" class="view" hidden>
       <div class="detail-preview" id="detail-preview"></div>
@@ -232,6 +267,10 @@
         <button class="btn btn-secondary btn-wide" id="detail-reformat" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span>Другой формат</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-remodel" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span>Сделать модель заново</span></button>
       </div>
+      <label class="detail-share" id="detail-share" hidden>
+        <span class="detail-share-text"><b>Показать в Идеях</b><span>другие увидят картинку, название и запрос, без имени</span></span>
+        <input type="checkbox" class="cad-switch" id="detail-share-input">
+      </label>
       <p class="note" id="detail-sent" hidden>Сохранено в «Мои работы»</p>
       <p class="note" id="detail-note"></p>
     </section>
@@ -676,6 +715,7 @@
   <nav id="tabbar" class="tabbar" hidden>
     <button class="tab is-active" data-tab="create" type="button"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Создать</span></button>
     <button class="tab" data-tab="works" type="button"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Мои работы</span></button>
+    <button class="tab" data-tab="gallery" type="button"><svg class="i" aria-hidden="true"><use href="#i-star"/></svg><span>Идеи</span></button>
     <button class="tab" data-tab="balance" type="button"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span>Баланс</span></button>
     <button class="tab" data-tab="editor" type="button"><svg class="i" aria-hidden="true"><use href="#i-brush"/></svg><span>Редактор</span></button>
   </nav>
@@ -714,11 +754,12 @@
     </div>
   </div>
 
-  <script src="api.js?v=11"></script>
-  <script src="app.js?v=19"></script>
+  <script src="api.js?v=12"></script>
+  <script src="app.js?v=20"></script>
   <script src="jobs.js?v=7"></script>
   <script src="create.js?v=12"></script>
   <script src="projects.js?v=1"></script>
+  <script src="gallery.js?v=1"></script>
   <script src="ask.js?v=1"></script>
   <script src="editor.js?v=10"></script>
   <script src="cad.js?v=5"></script>
