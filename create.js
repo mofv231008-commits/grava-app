@@ -740,6 +740,8 @@ function resultCard(o) {
   const actions = el('div', 'result-actions');
   resultActions(o).forEach((b) => actions.appendChild(b));
   card.appendChild(actions);
+  const check = printCheck(o, 'inline');
+  if (check) card.appendChild(check);
   if (flexiMain(o)) card.appendChild(el('p', 'result-hint', 'Шарниры поставлю сам, около минуты'));
   else if (isSketch(o) && canBase(o)) card.appendChild(el('p', 'result-hint', BASE_HINT));
   if (canVariant(o) && projectBusy(orderProject(o))) card.appendChild(el('p', 'result-hint', 'Подожди, пока доделается прошлый'));

@@ -196,7 +196,11 @@ function mockState() {
         // project: '' — старые работы, до проектов (в списке они в «Ранее»)
         orders: [
           { id: 'o5', kind: 'sketch', sketch: true, mode: '3d_flexi', '3d_flexi': true, title: 'Ящерица', date: day(0), has_preview: true, has_file: false, editable: true, project: '', prompt: 'Ящерица на шарнирах, лапы в стороны' },
-          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false },
+          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false,
+            notes: [
+              { level: 'warn', code: 'tips', text: 'Фигурка может упасть: центр тяжести не над опорой' },
+              { level: 'info', code: 'small_foot', text: 'Опора маленькая — включи в слайсере кайму (brim)' },
+            ] },
           { id: 'o3', kind: 'laser', mode: 'laser', title: 'Волк воет на луну', size_mm: 150, date: day(2), has_file: true, has_preview: true, editable: true, project: '', prompt: 'Волк воет на луну' },
           { id: 'o2', kind: 'cad', mode: 'cad', title: 'Пластина 50×30×3', date: day(3), has_file: false, has_preview: false, project: '', prompt: 'Пластина 50×30×3, два отверстия 5 мм' },
           { id: 'o12', kind: 'laser', mode: 'laser', title: 'Ключница-домик', size_mm: 200, date: day(4), has_file: true, has_preview: true, editable: true, project: 'p_demo1', prompt: 'добавь ещё два крючка' },
@@ -395,6 +399,7 @@ function mockOrder(db, d) {
     o.size_mm = 100;
     o.flexi = o.mode === '3d_flexi' || d.flexi === true;
     if (d.base === 'oval' || (from && from.base === 'oval' && d.kind === 'model_format')) o.base = 'oval'; // сервер добавил подставку
+    o.notes = []; // проверка печати: всё хорошо
   } else {
     o.mode = 'cad';
   }
@@ -561,6 +566,11 @@ async function mockDownload(params) {
     return new Response(mockLizardStl(!!(o && /плоск/i.test(o.title))).slice(0), { headers: { 'content-type': 'application/octet-stream' } });
   }
   if (params.a === 'file' && params.what !== 'preview') {
+    // 3D-просмотр: настоящий эублефар из tests/gecko.stl (120 мм, есть тонкие пальцы), без него — кубик
+    try {
+      const res = await fetch('tests/gecko.stl');
+      if (res.ok) return new Response(await res.arrayBuffer(), { headers: { 'content-type': 'application/octet-stream' } });
+    } catch (e) { /* нет файла — кубик */ }
     return new Response(mockCubeStl(), { headers: { 'content-type': 'application/octet-stream' } });
   }
   // картинка для редактора

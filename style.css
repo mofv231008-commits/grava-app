@@ -54,6 +54,8 @@
   --warn-soft: rgba(214, 160, 40, .16);
   --danger-soft: rgba(181, 67, 47, .10);
   --success-soft: rgba(91, 140, 81, .14);
+  --warn: #B4621B;
+  --info: #2F6DB0;
   --overlay: rgba(31, 30, 29, .45);
   --float-shadow: 0 2px 12px rgba(0, 0, 0, .06);
   /* литофания «на просвет»: тёмная комната, лампа за пластиной */
@@ -94,6 +96,8 @@
   --warn-soft: rgba(214, 170, 60, .16);
   --danger-soft: rgba(224, 122, 101, .14);
   --success-soft: rgba(140, 191, 127, .14);
+  --warn: #E6A35C;
+  --info: #84B5EA;
   --overlay: rgba(0, 0, 0, .55);
   --float-shadow: none;
   --lamp-bg: radial-gradient(circle at 50% 45%, #2F2924 0%, #171411 72%);
@@ -1208,6 +1212,20 @@ button {
   transition: opacity .6s ease;
 }
 .viewer-hint.is-fading { opacity: 0; }
+.viewer-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(var(--safe-bottom) + 16px);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+body.has-mainbtn .viewer-bar { bottom: calc(var(--safe-bottom) + 76px); }
+.viewer-thin { background: var(--surface); border: 1px solid var(--border); }
+.viewer-thin-text { margin: 0; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 14px; line-height: 1.4; text-align: center; }
+.viewer.has-bar .viewer-hint { bottom: calc(var(--safe-bottom) + 76px); }
+body.has-mainbtn .viewer.has-bar .viewer-hint { bottom: calc(var(--safe-bottom) + 136px); }
 
 /* ---------- Тост и затемнение ---------- */
 .toast {
@@ -1690,6 +1708,18 @@ body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) +
 .detail-base .pill { flex-shrink: 0; }
 .detail-base-sub { font-size: 13px; line-height: 1.35; color: var(--text-2); }
 .detail-hint { margin: -4px 2px 0; font-size: 13px; color: var(--text-2); text-align: center; }
+
+/* Проверка печати: зелёная строка «Проверено» или список предупреждений */
+.pcheck { display: grid; gap: 6px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.pcheck.is-ok { background: var(--success-soft); }
+.detail-check .pcheck { margin: -6px 0 16px; }
+.pcheck-title { font-size: 13px; font-weight: 600; }
+.pcheck-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; line-height: 1.4; }
+.pcheck-row .i { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+.pcheck-row.is-ok .i { color: var(--success); stroke-width: 2.2; }
+.pcheck-row.is-warn .i { color: var(--warn); stroke-width: 2; }
+.pcheck-row.is-info .i { color: var(--info); stroke-width: 2; }
+.pcheck-btn { justify-self: start; margin-top: 2px; background: var(--surface); }
 @media (hover: hover) { .pill:not(.is-main):not(.is-toggle):hover { background: var(--border); } .pill.is-main:hover { background: var(--accent-hover); } }
 
 .job .result-thumb { display: flex; align-items: center; justify-content: center; color: var(--text-2); }

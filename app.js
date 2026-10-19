@@ -152,6 +152,47 @@ function syncBaseToggles() {
   document.querySelectorAll('[data-base-toggle]').forEach(syncBaseToggle);
 }
 
+/* ---------- Проверка печати ---------- */
+// У 3D-моделей сервер пишет notes: [{ level: 'warn' | 'info', code, text }] — что человеку надо знать
+// (floating — кусок висит в воздухе, tips — может упасть, small_foot — опора маленькая, no_foot — почти не касается стола).
+// Нет поля (старые модели) — блока нет. how — как отправить «Пересобрать с подставкой»: 'inline' из ленты, false — с экрана работы.
+function printCheck(o, how) {
+  if (!isModel(o) || !Array.isArray(o.notes)) return null;
+  const box = el('div', 'pcheck');
+  if (!o.notes.length) {
+    box.classList.add('is-ok');
+    const row = el('div', 'pcheck-row is-ok');
+    row.appendChild(icon('check'));
+    row.appendChild(el('span', '', 'Проверено: печатается без проблем'));
+    box.appendChild(row);
+    return box;
+  }
+  box.appendChild(el('div', 'pcheck-title', 'Проверка печати'));
+  o.notes.slice(0, 5).forEach((n) => {
+    const warn = n && n.level === 'warn';
+    const row = el('div', 'pcheck-row ' + (warn ? 'is-warn' : 'is-info'));
+    row.appendChild(icon(warn ? 'warn' : 'info'));
+    row.appendChild(el('span', '', String((n && n.text) || '')));
+    box.appendChild(row);
+  });
+  if (needsBase(o)) box.appendChild(pill('base', 'Пересобрать с подставкой', () => rebuildWithBase(o, how), 'pcheck-btn'));
+  return box;
+}
+
+// Может упасть или почти не касается стола, подставки ещё нет — там же, где «Другой формат».
+function needsBase(o) {
+  return o.notes.some((n) => n && (n.code === 'tips' || n.code === 'no_foot'))
+    && !hasBase(o) && canBase(o) && hasFile(o) && o.jointed !== true && isNewestModel(o);
+}
+
+function rebuildWithBase(o, how) {
+  haptic();
+  const data = { kind: 'model_format', format: String(o.format || 'stl').toLowerCase(), base: 'oval', title: o.title || '' };
+  startJob(data, o.title || '3D-модель', how, { project: orderProject(o) }).then((ok) => {
+    if (ok && how === 'inline') feedToBottom(true);
+  });
+}
+
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
   return o.size_mm ? fileFormat(o) + ' · ' + o.size_mm + ' мм' : fileFormat(o);
@@ -508,6 +549,12 @@ function renderDetail() {
   }
 
   $('detail-title').textContent = o.title || 'Без названия';
+
+  const check = $('detail-check');
+  check.textContent = '';
+  const pc = printCheck(o, false);
+  if (pc) check.appendChild(pc);
+  check.hidden = !pc;
 
   const meta = $('detail-meta');
   meta.textContent = '';
@@ -1011,6 +1058,10 @@ async function startViewer(o) {
   const token = ++viewer.token;
   setViewerStatus('loading');
   $('viewer-hint').hidden = true;
+  $('viewer-bar').hidden = true;
+  $('viewer').classList.remove('has-bar');
+  $('viewer-thin-text').hidden = true;
+  thinBusy(false);
   try {
     const [lib, buffer] = await Promise.all([loadThree(), fetchModel(o, token)]);
     if (token !== viewer.token) return;
@@ -1020,6 +1071,8 @@ async function startViewer(o) {
     buildScene(lib, buffer);
     setViewerStatus('none');
     showHint();
+    $('viewer-bar').hidden = !!lithoKind(o); // литофания тонкая нарочно — искать нечего
+    $('viewer').classList.toggle('has-bar', !lithoKind(o));
   } catch (err) {
     if (token !== viewer.token || (err && err.name === 'AbortError')) return;
     if (err && err.code === 'auth') {
@@ -1078,10 +1131,13 @@ function buildScene(T, buffer) {
   const stage = $('viewer-stage');
   let geometry = null;
   let renderer = null;
+  let offset = null; // сдвиг центровки — для меток тонких мест
   try {
     geometry = new T.STLLoader().parse(buffer);
     if (!geometry.attributes.position || !geometry.attributes.position.count) throw new Error('empty');
     geometry.rotateX(-Math.PI / 2); // в STL «вверх» — это Z, а в three.js — Y
+    geometry.computeBoundingBox();
+    offset = geometry.boundingBox.getCenter(new T.Vector3());
     geometry.center();
     // Сглаживаем грани, но острые рёбра оставляем острыми. Для огромных моделей пропускаем.
     if (geometry.attributes.position.count <= 1500000) {
@@ -1133,7 +1189,7 @@ function buildScene(T, buffer) {
   controls.autoRotate = true;
   controls.autoRotateSpeed = 2;
 
-  const s = { renderer, scene, camera, controls, mesh, raf: 0, idleTimer: 0, ro: null, onResize: null, touched: false };
+  const s = { T, renderer, scene, camera, controls, mesh, offset, thin: null, raf: 0, idleTimer: 0, ro: null, onResize: null, touched: false };
 
   // Авто-поворот, пока модель не трогают; через 3 секунды без касаний — снова крутится.
   controls.addEventListener('start', () => {
@@ -1166,9 +1222,10 @@ function buildScene(T, buffer) {
     window.addEventListener('resize', resize);
   }
 
-  const loop = () => {
+  const loop = (t) => {
     s.raf = requestAnimationFrame(loop);
     controls.update();
+    if (s.thin) s.thin.children.forEach((b) => b.scale.setScalar(1 + 0.25 * Math.sin((t || 0) / 160))); // метки пульсируют
     renderer.render(scene, camera);
   };
   loop();
@@ -1186,11 +1243,144 @@ function destroyScene() {
   if (s.ro) s.ro.disconnect();
   if (s.onResize) window.removeEventListener('resize', s.onResize);
   s.controls.dispose();
+  thinClear(s);
   s.mesh.geometry.dispose();
   s.mesh.material.dispose();
   s.renderer.dispose();
   s.renderer.forceContextLoss();
   s.renderer.domElement.remove();
+}
+
+/* ---------- Тонкие места (в просмотре 3D) ---------- */
+// Считает thin-worker.js (thin-core.js): модель — из уже загруженного буфера, в реальном размере o.size_mm.
+
+const THIN_WORKER_URL = './thin-worker.js?v=1';
+const thin = { worker: null, seq: 0, wait: {}, busy: false };
+
+function thinRun(buffer, size) {
+  if (!thin.worker) {
+    thin.worker = new Worker(THIN_WORKER_URL, { type: 'module' });
+    thin.worker.onmessage = (e) => {
+      const d = e.data;
+      const p = thin.wait[d.seq];
+      if (!p) return;
+      delete thin.wait[d.seq];
+      if (d.ok) p.resolve(d);
+      else p.reject(new Error(d.error));
+    };
+    thin.worker.onerror = (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const wait = thin.wait;
+      thin.wait = {};
+      if (thin.worker) thin.worker.terminate();
+      thin.worker = null;
+      Object.values(wait).forEach((p) => p.reject(new Error('worker')));
+    };
+  }
+  const seq = ++thin.seq;
+  return new Promise((resolve, reject) => {
+    thin.wait[seq] = { resolve, reject };
+    thin.worker.postMessage({ seq, buffer, size: Number(size) || 0 });
+  });
+}
+
+function thinBusy(on) {
+  thin.busy = on;
+  const btn = $('viewer-thin');
+  btn.disabled = on;
+  setLabel(btn, on ? 'Ищу тонкие места…' : 'Найти тонкие места');
+}
+
+function thinClear(s) {
+  if (!s || !s.thin) return;
+  s.thin.userData.geometry.dispose();
+  s.thin.userData.material.dispose();
+  s.scene.remove(s.thin);
+  s.thin = null;
+}
+
+// Шар из треугольников: в нашей сборке three.js (vendor/three) нет SphereGeometry.
+function thinSphere(T, r) {
+  const W = 18;
+  const H = 12;
+  const pos = [];
+  const idx = [];
+  for (let j = 0; j <= H; j++) {
+    const v = (j / H) * Math.PI;
+    for (let i = 0; i <= W; i++) {
+      const u = (i / W) * 2 * Math.PI;
+      pos.push(r * Math.sin(v) * Math.cos(u), r * Math.cos(v), r * Math.sin(v) * Math.sin(u));
+    }
+  }
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const a = j * (W + 1) + i;
+      const b = a + W + 1;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const g = new T.BufferGeometry();
+  g.setAttribute('position', new T.BufferAttribute(new Float32Array(pos), 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+async function viewerThin() {
+  const o = state.detail;
+  const s = viewer.scene;
+  if (!o || !s || thin.busy || viewer.cache.id !== o.id) return;
+  haptic();
+  thinBusy(true);
+  thinClear(s);
+  $('viewer-thin-text').hidden = true;
+  let r;
+  try {
+    r = await thinRun(viewer.cache.buffer.slice(0), o.size_mm);
+  } catch (e) {
+    r = null;
+  }
+  if (viewer.scene !== s) return; // просмотр закрыли, пока считали
+  thinBusy(false);
+  if (!r) {
+    hapticNotify('error');
+    toast('Не получилось проверить, попробуй ещё раз');
+    return;
+  }
+  const lines = [];
+  if (r.spots.length) {
+    thinShow(s, r);
+    lines.push('Найдено тонких мест: ' + r.spots.length + '. Там лучше утолщить или печатать с поддержками');
+  } else {
+    toast('Тонких мест нет 👍');
+  }
+  if (r.thinShare > 0.15) lines.push('Модель в целом тонкая — сделай её крупнее (размер больше)');
+  hapticNotify(lines.length ? 'warning' : 'success');
+  $('viewer-thin-text').textContent = lines.join('. ');
+  $('viewer-thin-text').hidden = !lines.length;
+}
+
+// Красные полупрозрачные шарики ~3 мм поверх модели. Точки — в STL, умноженном на k; просмотр же
+// показывает STL как есть, повёрнутым (Z вверх → Y вверх) и сдвинутым к центру — переводим так же.
+function thinShow(s, r) {
+  const T = s.T;
+  const group = new T.Group();
+  // светятся сами (emissive) и видны сквозь модель (depthTest: false)
+  const material = new T.MeshStandardMaterial({
+    color: 0xe53935, emissive: 0xe53935, emissiveIntensity: 0.7, roughness: 1, metalness: 0,
+    transparent: true, opacity: 0.55, depthTest: false, depthWrite: false,
+  });
+  const geometry = thinSphere(T, 3 / r.k);
+  group.userData.material = material;
+  group.userData.geometry = geometry;
+  r.spots.forEach((p) => {
+    const ball = new T.Mesh(geometry, material);
+    ball.position.set(p.x / r.k - s.offset.x, p.z / r.k - s.offset.y, -p.y / r.k - s.offset.z);
+    ball.renderOrder = 10;
+    group.add(ball);
+  });
+  s.scene.add(group);
+  s.thin = group;
 }
 
 function showHint() {
@@ -1236,6 +1426,7 @@ function bindEvents() {
 
   bindDetail();
 
+  $('viewer-thin').addEventListener('click', viewerThin);
   $('viewer-retry').addEventListener('click', () => {
     haptic();
     if (state.detail) startViewer(state.detail);

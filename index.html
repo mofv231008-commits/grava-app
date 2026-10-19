@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=23">
+  <link rel="stylesheet" href="style.css?v=24">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -40,6 +40,9 @@
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-base" viewBox="0 0 24 24"><ellipse cx="12" cy="10" rx="8.5" ry="3.2"/><path d="M3.5 10v3.5c0 1.8 3.8 3.2 8.5 3.2s8.5-1.4 8.5-3.2V10"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.6 4.6a1.6 1.6 0 0 1 2.8 0l7.6 13.2a1.6 1.6 0 0 1-1.4 2.4H4.4A1.6 1.6 0 0 1 3 17.8z"/><path d="M12 9.5v4.5M12 17v.1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.9v.1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
     <symbol id="i-turn" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v4h-4"/></symbol>
     <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11.5 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-5.5"/><path d="m17.3 3.7 3 3-8.3 8.3-3.6.6.6-3.6z"/></symbol>
   </svg>
@@ -185,6 +188,7 @@
       <div class="detail-preview" id="detail-preview"></div>
       <h1 class="detail-title" id="detail-title"></h1>
       <div class="detail-meta" id="detail-meta"></div>
+      <div class="detail-check" id="detail-check" hidden></div>
       <div class="detail-format" id="detail-format" hidden>
         <span>Формат модели</span>
         <div class="segmented">
@@ -689,6 +693,11 @@
       <button class="btn btn-primary" id="viewer-retry" type="button">Попробовать ещё раз</button>
     </div>
     <div id="viewer-hint" class="viewer-hint" hidden>Крути пальцем · щипок — приблизить</div>
+    <!-- тонкие места: меньше 1,2 мм не напечатается или сломается -->
+    <div class="viewer-bar" id="viewer-bar" hidden>
+      <p class="viewer-thin-text" id="viewer-thin-text" role="status" hidden></p>
+      <button class="btn btn-secondary viewer-thin" id="viewer-thin" type="button"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span>Найти тонкие места</span></button>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>
@@ -705,10 +714,10 @@
     </div>
   </div>
 
-  <script src="api.js?v=10"></script>
-  <script src="app.js?v=18"></script>
+  <script src="api.js?v=11"></script>
+  <script src="app.js?v=19"></script>
   <script src="jobs.js?v=7"></script>
-  <script src="create.js?v=11"></script>
+  <script src="create.js?v=12"></script>
   <script src="projects.js?v=1"></script>
   <script src="ask.js?v=1"></script>
   <script src="editor.js?v=10"></script>
