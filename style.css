@@ -1709,6 +1709,19 @@ body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) +
 .detail-base-sub { font-size: 13px; line-height: 1.35; color: var(--text-2); }
 .detail-hint { margin: -4px 2px 0; font-size: 13px; color: var(--text-2); text-align: center; }
 
+/* Деление на части */
+.split-preview { margin: 0; border-radius: var(--radius); }
+.split-status { color: var(--text); }
+.split-status .spinner { border-color: var(--border); border-top-color: var(--text-2); }
+.split-info { margin: 12px 2px 0; font-size: 15px; font-weight: 600; text-align: center; min-height: 1.4em; }
+.split-warn { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--warn-soft); font-size: 14px; line-height: 1.4; }
+.split-explode { margin-top: 12px; }
+.split-dims { margin-top: 8px; font-size: 13px; color: var(--text-2); }
+.split-bed { display: flex; gap: 8px; margin-top: 10px; }
+.split-bed label { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; font-weight: 600; }
+.split-bed .cad-num-input { flex: 1; min-width: 0; width: auto; }
+.split-bed .cad-num-input.is-bad { box-shadow: inset 0 0 0 1.5px var(--danger); }
+
 /* «Идеи» */
 .gallery-lead { margin: -12px 2px 16px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
 .gallery-loading { display: flex; justify-content: center; padding: 48px 0; }

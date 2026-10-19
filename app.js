@@ -31,6 +31,8 @@ const state = {
   lithoBusy: false,
   idea: null,       // открытая карточка из «Идей» (gallery.js)
   galleryOpen: false,
+  split: null,      // открытый экран «Разделить на части» (split.js)
+  splitBusy: false,
 };
 
 function sessionExpired() {
@@ -289,6 +291,7 @@ function topScreen() {
   if (state.flexi) return 'flexi';
   if (state.cad) return 'cad';
   if (state.litho) return 'litho';
+  if (state.split) return 'split';
   if (state.wait) return 'wait';
   if (state.order) return 'order';
   if (state.detail) return 'detail';
@@ -310,6 +313,7 @@ function renderView() {
   $('view-cad').hidden = top !== 'cad';
   $('view-flexi').hidden = top !== 'flexi';
   $('view-litho').hidden = top !== 'litho';
+  $('view-split').hidden = top !== 'split';
   $('tabbar').hidden = !inApp || overlay;
   document.body.classList.toggle('no-tabbar', !inApp || overlay);
   const composerOn = inApp && !overlay && state.tab === 'create';
@@ -347,7 +351,7 @@ function renderView() {
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D, в «Идеях» тянут вниз, чтобы обновить, —
   // свайп вниз не должен сворачивать приложение.
-  const noSwipes = editorOpen || galleryOpen || (inApp && (top === 'cad' || top === 'flexi' || top === 'litho'));
+  const noSwipes = editorOpen || galleryOpen || (inApp && (top === 'cad' || top === 'flexi' || top === 'litho' || top === 'split'));
   if (noSwipes !== state.noSwipes) {
     state.noSwipes = noSwipes;
     tg.swipes(!noSwipes);
@@ -358,10 +362,10 @@ function renderView() {
 }
 
 // Кнопки Телеги (или их замена в браузере) под экран, который сейчас сверху.
-// Конструктор, сборщик шарниров и литофания управляют MainButton сами.
+// Конструктор, сборщик шарниров, литофания и деление на части управляют MainButton сами.
 function syncButtons() {
   const top = topScreen();
-  if (top === 'cad' || top === 'flexi' || top === 'litho') return;
+  if (top === 'cad' || top === 'flexi' || top === 'litho' || top === 'split') return;
   if (top || proj.drawer) tg.BackButton.show();
   else tg.BackButton.hide();
   let text = '';
@@ -597,6 +601,8 @@ function renderDetail() {
   // подвижная модель — главная кнопка; остальные 3D-модели — можно попробовать
   $('detail-flexi').hidden = !canFlexi(o) || flexiMain(o);
   $('detail-litho').hidden = !canLitho(o);
+  $('detail-split').hidden = !canSplit(o);
+  $('detail-split-hint').hidden = !canSplit(o);
   $('detail-cad').hidden = o.cad !== true; // у черновика детали конструктор — на главной кнопке
   $('detail-resize').hidden = k !== 'laser' || o.cad === true || !hasFile(o);
   if (o.size_mm) {
@@ -685,6 +691,7 @@ function goBack() {
   else if (state.flexi) { if (!flexiBack()) closeFlexi(); } // из редактора шарниров — к результату
   else if (state.cad) closeCad();
   else if (state.litho) closeLitho();
+  else if (state.split) closeSplit();
   else if (state.wait) closeWait();
   else if (state.order) closeOrder();
   else if (state.detail) closeDetail();
@@ -697,6 +704,7 @@ function onMainButton() {
   if (top === 'flexi') flexiExport();
   else if (top === 'cad') cadExport();
   else if (top === 'litho') lithoSave();
+  else if (top === 'split') splitSave();
   else if (top === 'order') submitOrder();
   else if (top === 'detail') onDetailMain();
   else if (top === 'idea') ideaUse();
@@ -733,6 +741,9 @@ function bindDetail() {
   });
   $('detail-litho').addEventListener('click', () => {
     if (state.detail) openLitho({ base: state.detail });
+  });
+  $('detail-split').addEventListener('click', () => {
+    if (state.detail) openSplit(state.detail);
   });
   $('detail-edit').addEventListener('click', () => {
     if (state.detail) openOrderInEditor(state.detail);
@@ -1475,6 +1486,7 @@ function bindEvents() {
   bindFlexi();
   bindLitho();
   bindGallery();
+  bindSplit();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(onMainButton);

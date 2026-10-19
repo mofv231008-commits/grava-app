@@ -314,6 +314,16 @@ async function mockPost(url, params) {
     if (p.snapshot) mockSnapshots[id] = String(p.snapshot);
     return { status: 200, data: { ok: true, id } };
   }
+  // деление на части: каждый стол — своя работа «… (части, стол 2 из 3)»
+  if (url === CAD_API && p.a === 'split') {
+    const base = db.me.orders.find((x) => x.id === String(p.id)) || { title: 'Модель', project: '' };
+    const id = add({
+      kind: 'model', mode: 'split', format: 'stl', title: (base.title || 'Модель') + ' (части, стол ' + String(p.plate || '1/1').replace('/', ' из ') + ')',
+      has_file: true, has_preview: true, editable: false, project: p.project || base.project || '',
+    });
+    if (p.snapshot) mockSnapshots[id] = String(p.snapshot);
+    return { status: 200, data: { ok: true, id } };
+  }
   return { status: 200, data: { ok: true } };
 }
 const mockSnapshots = {};

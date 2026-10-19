@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=26">
+  <link rel="stylesheet" href="style.css?v=27">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -45,6 +45,7 @@
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></symbol>
     <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.8 2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
+    <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6.5" r="2.6"/><circle cx="6" cy="17.5" r="2.6"/><path d="M8.3 8 20 17M8.3 16 20 7"/></symbol>
     <symbol id="i-turn" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v4h-4"/></symbol>
     <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11.5 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-5.5"/><path d="m17.3 3.7 3 3-8.3 8.3-3.6.6.6-3.6z"/></symbol>
   </svg>
@@ -241,6 +242,8 @@
         <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg><span>Посмотреть в 3D</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Попробовать на шарнирах</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-litho" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-photo"/></svg><span>Литофания или барельеф</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-split" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg><span>Разделить на части</span></button>
+        <p class="detail-hint" id="detail-split-hint" hidden>если модель больше стола принтера</p>
         <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Открыть конструктор</span></button>
         <div id="detail-resize" hidden>
           <button class="btn btn-secondary btn-wide" id="detail-resize-btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Другой размер</span></button>
@@ -583,6 +586,61 @@
       </div>
     </section>
 
+    <!-- Деление большой модели на части под стол принтера (split.js) -->
+    <section id="view-split" class="view" hidden>
+      <div id="split-missing" class="empty" hidden>
+        <div class="empty-icon"><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg></div>
+        <p id="split-missing-text">Не получилось открыть модель</p>
+        <button class="btn btn-primary cad-missing-btn" id="split-missing-btn" type="button">Назад</button>
+      </div>
+
+      <div id="split-main">
+        <h1 class="detail-title cad-title">Разделить на части</h1>
+        <div class="detail-meta"><span id="split-title"></span><span>Бесплатно</span></div>
+
+        <div class="cad-preview split-preview" id="split-preview">
+          <div class="cad-stage" id="split-stage"></div>
+          <div class="cad-busy" id="split-busy" hidden><span class="cad-busy-dot"></span>Режу на части…</div>
+          <div class="litho-status split-status" id="split-status">
+            <div class="spinner" id="split-status-spinner"></div>
+            <p id="split-status-text">Загружаю модель…</p>
+          </div>
+        </div>
+        <p class="split-info" id="split-info" role="status"></p>
+        <p class="split-warn" id="split-warn" hidden>Одна часть всё равно больше стола — уменьши размер</p>
+        <button class="btn btn-secondary btn-wide split-explode" id="split-explode" type="button" disabled><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg><span>Разнести</span></button>
+
+        <!-- после «Сохранить части»: каждый стол — работа в «Моих работах» -->
+        <div class="saved" id="split-saved" role="status" hidden>
+          <p class="saved-title"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span id="split-saved-text">Сохранено в «Мои работы»</span></p>
+          <button class="btn btn-secondary btn-wide" type="button" id="split-saved-open"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Открыть «Мои работы»</span></button>
+          <button class="btn btn-secondary btn-wide" type="button" id="split-saved-send"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span>Отправить в Telegram</span></button>
+        </div>
+
+        <div class="card cad-list">
+          <div class="cad-param">
+            <div class="cad-param-head"><label class="cad-param-label" for="split-size">Высота / длина фигурки</label><b class="flexi-val" id="split-size-val">260 мм</b></div>
+            <input class="cad-slider" type="range" id="split-size" min="100" max="600" step="5" value="260">
+            <p class="split-dims" id="split-dims"></p>
+          </div>
+          <div class="cad-param">
+            <div class="cad-param-head"><span class="cad-param-label">Стол принтера, мм</span></div>
+            <div class="split-bed">
+              <label><span>X</span><input class="cad-num-input" id="split-bed-x" type="number" inputmode="numeric" min="50" max="1000" value="250" aria-label="Стол по X, мм"></label>
+              <label><span>Y</span><input class="cad-num-input" id="split-bed-y" type="number" inputmode="numeric" min="50" max="1000" value="250" aria-label="Стол по Y, мм"></label>
+              <label><span>Z</span><input class="cad-num-input" id="split-bed-z" type="number" inputmode="numeric" min="50" max="1000" value="250" aria-label="Высота печати, мм"></label>
+            </div>
+            <p class="split-dims">Anycubic Kobra 3 — 250 × 250 × 250</p>
+          </div>
+        </div>
+
+        <details class="flexi-print" id="split-print">
+          <summary>Как печатать и собирать</summary>
+          <p class="note">Каждый стол — отдельный файл. Части уже стоят как печатать, не поворачивай их. Штыри печатай стоя, заполнение 100 %. Вставь штыри в отверстия и склей части (суперклей или эпоксидка). Не меняй размер в программе для печати — отверстия рассчитаны на этот размер.</p>
+        </details>
+      </div>
+    </section>
+
     <!-- Вкладка «Редактор» -->
     <section id="view-editor" class="view" hidden>
       <header class="page-head">
@@ -754,8 +812,8 @@
     </div>
   </div>
 
-  <script src="api.js?v=12"></script>
-  <script src="app.js?v=20"></script>
+  <script src="api.js?v=13"></script>
+  <script src="app.js?v=21"></script>
   <script src="jobs.js?v=7"></script>
   <script src="create.js?v=12"></script>
   <script src="projects.js?v=1"></script>
@@ -765,5 +823,6 @@
   <script src="cad.js?v=5"></script>
   <script src="flexi.js?v=17"></script>
   <script src="litho.js?v=1"></script>
+  <script src="split.js?v=1"></script>
 </body>
 </html>
