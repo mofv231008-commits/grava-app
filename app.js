@@ -98,11 +98,14 @@ function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', l
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 function canSend(o) { return isSketch(o) || hasFile(o); } // эскиз бот присылает картинкой, остальное — файлом
 // 3D-модель, которую можно сделать подвижной: не собранная уже на шарнирах и не деталь из конструктора.
-function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && !lithoKind(o) && o.mode !== 'color' && hasFile(o); }
+// Какие кнопки у каких работ: у цветной (3MF) — только «Отправить в Telegram» и «Показать в Идеях»;
+// у модели по частям — ещё «Посмотреть в 3D»; у литофании — без шарниров, редактора, цвета и подставки.
+const isDerived = (o) => o.mode === 'color' || o.mode === 'split';
+function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && !lithoKind(o) && !isDerived(o) && hasFile(o); }
 // Сделана в режиме «Подвижная на шарнирах» — «Сделать подвижной» главным действием.
 function flexiMain(o) { return canFlexi(o) && o.flexi === true; }
 // литофания или барельеф — по картинке работы (её превью, у эскиза — сам файл)
-function canLitho(o) { return hasPreview(o) && !isCadDraft(o) && o.mode !== 'color'; }
+function canLitho(o) { return hasPreview(o) && !isCadDraft(o) && !isDerived(o); }
 
 // Как называется вид работы на карточке и экране работы. laser — у чертежа (на экране работы — длиннее).
 function kindName(o, laser) {
@@ -565,7 +568,7 @@ function openDetail(o, opts) {
 // Самая свежая 3D-модель — только у неё есть «Другой формат».
 function isNewestModel(o) {
   const orders = (state.me && state.me.orders) || [];
-  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true && !lithoKind(x) && x.mode !== 'color');
+  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true && !lithoKind(x) && !isDerived(x));
   return !!newest && String(newest.id) === String(o.id);
 }
 
@@ -628,7 +631,7 @@ function renderDetail() {
   }
   $('detail-ask').hidden = !canAsk(o);
   // у деталей из конструктора, собранных на шарнирах и литофаний редактор картинок не нужен
-  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o) || isColor(o);
+  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o) || isDerived(o);
   // «Ещё вариант» — пока в этом проекте рисуется прошлый, второй не отправляем
   const variantBusy = canVariant(o) && projectBusy(orderProject(o));
   $('detail-again').hidden = !canVariant(o);
@@ -638,7 +641,7 @@ function renderDetail() {
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
   setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
-  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o) || isColor(o);
+  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o) || isDerived(o);
   // подставка — рядом с «Сделать 3D-модель» (и у модели — для «Сделать модель заново» и «Другой формат»)
   $('detail-base').hidden = !canBase(o) || !(k === 'sketch' || reformat || !$('detail-remodel').hidden);
   syncBaseToggles();

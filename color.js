@@ -13,7 +13,7 @@ const COLOR_STYLE_HINT = {
 
 // Можно ли красить — решает сервер: поле color: true у модели. Готовую цветную второй раз не красим.
 function canColor(o) {
-  return !!o && isModel(o) && o.color === true && o.mode !== 'color' && hasFile(o);
+  return !!o && isModel(o) && o.color === true && !isDerived(o) && !lithoKind(o) && o.jointed !== true && o.cad !== true && hasFile(o);
 }
 
 function isColor(o) {
