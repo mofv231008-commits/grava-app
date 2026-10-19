@@ -383,6 +383,7 @@ function mockOrder(db, d) {
   };
   if (kind === 'sketch') {
     o.sketch = true;
+    if (d.variant) o.variant = d.variant; // «Ещё вариант»
     o.mode = d.flexi || (from && from.mode === '3d_flexi') ? '3d_flexi' : '3d';
     if (o.mode === '3d_flexi') o['3d_flexi'] = true;
   } else if (kind === 'laser') {

@@ -638,6 +638,12 @@ function resultActions(o) {
   if (k === 'sketch') {
     out.push(pill('cube', withPrice('Сделать 3D-модель', 'model'), () => feedMakeModel(o)));
     if (canBase(o)) out.push(baseToggle());
+    if (canVariant(o)) {
+      const busy = projectBusy(orderProject(o));
+      const b = pill('refresh', withPrice('Ещё вариант', 'sketch'), () => sketchVariant(o).then((ok) => { if (ok) feedToBottom(true); }), busy ? 'is-disabled' : '');
+      if (busy) b.setAttribute('aria-disabled', 'true');
+      out.push(b);
+    }
     out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
     if (o.editable !== false) out.push(pill('brush', 'Редактор', () => openOrderInEditor(o)));
   } else if (k === 'model') {
@@ -669,6 +675,37 @@ function resultActions(o) {
     out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
   }
   return out;
+}
+
+/* ---------- «Ещё вариант» эскиза ---------- */
+// Нейросеть даёт один эскиз; variant: 2 — тот же запрос, но другая поза, ракурс и пропорции (сам предмет тот же).
+
+// В проекте что-то ещё рисуется — второй эскиз одновременно не отправляем.
+function projectBusy(pid) {
+  return jobs.list.some((j) => j.status === 'running' && (j.project || OLD_PROJECT) === pid);
+}
+
+// у старых работ запроса нет — вариант делать не из чего
+function canVariant(o) {
+  return kindOf(o) === 'sketch' && !!String(o.prompt || '').trim();
+}
+
+function isVariant(o) {
+  const saved = savedPrompt(o.id);
+  return !!(o.variant || (saved && saved.variant));
+}
+
+function sketchVariant(o) {
+  if (projectBusy(orderProject(o))) {
+    toast('Подожди, пока доделается прошлый');
+    return Promise.resolve(false);
+  }
+  haptic();
+  const data = { kind: 'sketch', prompt: o.prompt || o.title, title: o.title || '', variant: 2 };
+  if (isFlexiMode(o)) data.flexi = true;
+  if (o.project) data.project = String(o.project);
+  // в проект этой работы, а не в тот, что открыт на «Создать»
+  return startJob(data, o.title || 'Эскиз', 'inline', { project: orderProject(o) });
 }
 
 function feedMakeModel(o) {
@@ -705,6 +742,7 @@ function resultCard(o) {
   card.appendChild(actions);
   if (flexiMain(o)) card.appendChild(el('p', 'result-hint', 'Шарниры поставлю сам, около минуты'));
   else if (isSketch(o) && canBase(o)) card.appendChild(el('p', 'result-hint', BASE_HINT));
+  if (canVariant(o) && projectBusy(orderProject(o))) card.appendChild(el('p', 'result-hint', 'Подожди, пока доделается прошлый'));
   msg.appendChild(card);
   return msg;
 }
@@ -845,15 +883,21 @@ function renderFeed() {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
     feedKey = key;
     box.textContent = '';
-    orders.forEach((o) => {
+    // пришёл второй вариант: два последних эскиза подряд — подсказка, что делать дальше
+    const n = orders.length;
+    const pickAt = n >= 2 && isSketch(orders[n - 1]) && isSketch(orders[n - 2]) && isVariant(orders[n - 1]) ? n - 2 : -1;
+    orders.forEach((o, i) => {
+      if (i === pickAt) box.appendChild(el('p', 'feed-pick', 'Выбери, какой нравится больше → «Сделать 3D-модель» под ним'));
       const req = savedPrompt(o.id);
       const ask = req && req.ask;
-      box.appendChild(bubble(ask ? ask.text : (req && req.prompt) || o.prompt || o.title || '', req && req.thumbs, req && req.photos));
+      const text = isVariant(o) ? 'Ещё вариант' : ask ? ask.text : (req && req.prompt) || o.prompt || o.title || '';
+      box.appendChild(bubble(text, req && req.thumbs, req && req.photos));
       if (ask && ask.answers) box.appendChild(askDoneLine(ask.answers));
       box.appendChild(resultCard(o));
     });
     list.forEach((j) => {
-      box.appendChild(bubble(j.ask ? j.ask.text : j.data.prompt || (j.photos ? '' : j.title), j.thumbs || (j.data.images || []).slice(0, 6), j.photos));
+      const text = j.data.variant ? 'Ещё вариант' : j.ask ? j.ask.text : j.data.prompt || (j.photos ? '' : j.title);
+      box.appendChild(bubble(text, j.thumbs || (j.data.images || []).slice(0, 6), j.photos));
       if (j.ask && j.ask.answers) box.appendChild(askDoneLine(j.ask.answers));
       box.appendChild(jobCard(j));
     });

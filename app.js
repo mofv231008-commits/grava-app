@@ -537,8 +537,11 @@ function renderDetail() {
   $('detail-ask').hidden = !canAsk(o);
   // у деталей из конструктора, собранных на шарнирах и литофаний редактор картинок не нужен
   $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o);
-  const saved = savedPrompt(o.id);
-  $('detail-again').hidden = k !== 'sketch' || !saved || !saved.prompt || (saved.kind && saved.kind !== 'sketch');
+  // «Ещё вариант» — пока в этом проекте рисуется прошлый, второй не отправляем
+  const variantBusy = canVariant(o) && projectBusy(orderProject(o));
+  $('detail-again').hidden = !canVariant(o);
+  $('detail-again').disabled = variantBusy;
+  $('detail-again-hint').hidden = !variantBusy;
   setLabel($('detail-again'), withPrice('Ещё вариант', 'sketch'));
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
@@ -673,11 +676,13 @@ function bindDetail() {
   });
   $('detail-again').addEventListener('click', () => {
     const o = state.detail;
-    const saved = o && savedPrompt(o.id);
-    if (!saved) return;
-    haptic();
-    // в проект этой работы, а не в тот, что открыт на «Создать»
-    startJob({ kind: 'sketch', prompt: saved.prompt, flexi: saved.flexi, title: saved.title || o.title || '' }, saved.title || o.title, false, { project: orderProject(o) });
+    if (!o) return;
+    // вариант рисуется в ленте проекта — туда и переходим
+    sketchVariant(o).then((ok) => {
+      if (!ok) return;
+      openProjectFromWorks(jobs.list[0] ? jobs.list[0].project : orderProject(o));
+      feedToBottom(true);
+    });
   });
   $('detail-reformat').addEventListener('click', () => {
     const o = state.detail;
