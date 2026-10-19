@@ -637,6 +637,7 @@ function resultActions(o) {
   const out = [];
   if (k === 'sketch') {
     out.push(pill('cube', withPrice('Сделать 3D-модель', 'model'), () => feedMakeModel(o)));
+    if (canBase(o)) out.push(baseToggle());
     out.push(pill('pencil', 'Изменить', () => composerEdit(o)));
     if (o.editable !== false) out.push(pill('brush', 'Редактор', () => openOrderInEditor(o)));
   } else if (k === 'model') {
@@ -651,7 +652,7 @@ function resultActions(o) {
     if (hasFile(o) && o.jointed !== true && isNewestModel(o)) {
       out.push(pill('file', 'Другой формат', () => {
         haptic();
-        startJob({ kind: 'model_format', format: fileFormat(o) === 'STL' ? '3mf' : 'stl', title: o.title || '' }, o.title || '3D-модель', 'inline')
+        startJob(withBase({ kind: 'model_format', format: fileFormat(o) === 'STL' ? '3mf' : 'stl', title: o.title || '' }, o), o.title || '3D-модель', 'inline')
           .then((ok) => { if (ok) feedToBottom(true); });
       }));
     }
@@ -672,7 +673,7 @@ function resultActions(o) {
 
 function feedMakeModel(o) {
   haptic();
-  const data = { kind: 'model', base_order: o.id, format: 'stl', title: o.title || '' };
+  const data = withBase({ kind: 'model', base_order: o.id, format: 'stl', title: o.title || '' }, o);
   if (isFlexiMode(o)) data.flexi = true;
   startJob(data, o.title || '3D-модель', 'inline').then((ok) => { if (ok) feedToBottom(true); });
 }
@@ -703,6 +704,7 @@ function resultCard(o) {
   resultActions(o).forEach((b) => actions.appendChild(b));
   card.appendChild(actions);
   if (flexiMain(o)) card.appendChild(el('p', 'result-hint', 'Шарниры поставлю сам, около минуты'));
+  else if (isSketch(o) && canBase(o)) card.appendChild(el('p', 'result-hint', BASE_HINT));
   msg.appendChild(card);
   return msg;
 }

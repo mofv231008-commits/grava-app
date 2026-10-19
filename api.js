@@ -393,6 +393,7 @@ function mockOrder(db, d) {
     o.format = d.format || (from && from.format) || 'stl';
     o.size_mm = 100;
     o.flexi = o.mode === '3d_flexi' || d.flexi === true;
+    if (d.base === 'oval' || (from && from.base === 'oval' && d.kind === 'model_format')) o.base = 'oval'; // сервер добавил подставку
   } else {
     o.mode = 'cad';
   }

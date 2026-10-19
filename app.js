@@ -99,6 +99,59 @@ function flexiMain(o) { return canFlexi(o) && o.flexi === true; }
 // литофания или барельеф — по картинке работы (её превью, у эскиза — сам файл)
 function canLitho(o) { return hasPreview(o) && !isCadDraft(o); }
 
+/* ---------- Подставка под фигурку ---------- */
+// Сервер сам добавляет овальную подставку (~3 мм, модель чуть утоплена): base: 'oval' в задании model / model_format.
+// Выбор запоминаем. Подвижным, деталям, литофаниям, цветным и моделям по частям подставка не нужна.
+const BASE_KEY = 'grava.base';
+const BASE_HINT = 'овальная подставка, чтобы фигурка не падала — бесплатно';
+function baseOn() {
+  try { return localStorage.getItem(BASE_KEY) === '1'; } catch (e) { return false; }
+}
+function setBaseOn(on) {
+  try { localStorage.setItem(BASE_KEY, on ? '1' : '0'); } catch (e) { /* приватный режим */ }
+}
+function canBase(o) {
+  return !!o && (isSketch(o) || isModel(o)) && !isFlexiMode(o) && o.flexi !== true && o.jointed !== true && o.cad !== true
+    && !lithoKind(o) && o.mode !== 'color' && o.mode !== 'split';
+}
+function withBase(data, o) {
+  if (baseOn() && canBase(o)) data.base = 'oval';
+  return data;
+}
+// Уже с подставкой: сервер прислал base или мы сами заказали её (запомнили при отправке).
+function hasBase(o) {
+  const saved = savedPrompt(o.id);
+  return o.base === 'oval' || !!(saved && saved.base === 'oval');
+}
+
+// Чип-тумблер «Подставка»: один выбор на все карточки — переключили в одной, обновились все.
+function baseToggle() {
+  const b = el('button', 'pill is-toggle');
+  b.type = 'button';
+  b.dataset.baseToggle = '1';
+  b.appendChild(icon('base'));
+  b.appendChild(el('span', '', 'Подставка'));
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    haptic();
+    setBaseOn(!baseOn());
+    syncBaseToggles();
+  });
+  syncBaseToggle(b);
+  return b;
+}
+function syncBaseToggle(b) {
+  const on = baseOn();
+  b.classList.toggle('is-on', on);
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.setAttribute('aria-label', on ? 'Подставка: включена' : 'Подставка: выключена');
+  const use = b.querySelector('use');
+  if (use) use.setAttribute('href', on ? '#i-check' : '#i-base');
+}
+function syncBaseToggles() {
+  document.querySelectorAll('[data-base-toggle]').forEach(syncBaseToggle);
+}
+
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
   return o.size_mm ? fileFormat(o) + ' · ' + o.size_mm + ' мм' : fileFormat(o);
@@ -491,6 +544,9 @@ function renderDetail() {
   $('detail-reformat').hidden = !reformat;
   setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
   $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o);
+  // подставка — рядом с «Сделать 3D-модель» (и у модели — для «Сделать модель заново» и «Другой формат»)
+  $('detail-base').hidden = !canBase(o) || !(k === 'sketch' || reformat || !$('detail-remodel').hidden);
+  syncBaseToggles();
   setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
   $('detail-sent').hidden = !state.detailFresh;
@@ -532,7 +588,7 @@ function onDetailMain() {
 // Эскиз → модель или «Сделать модель заново» из модели. flexi — если фигурка подвижная.
 function makeModel(o, format, fromMain) {
   haptic();
-  const data = { kind: 'model', base_order: o.id, format: format || 'stl', title: o.title || '' };
+  const data = withBase({ kind: 'model', base_order: o.id, format: format || 'stl', title: o.title || '' }, o);
   if (isFlexiMode(o)) data.flexi = true;
   startJob(data, o.title || '3D-модель', fromMain);
 }
@@ -591,6 +647,11 @@ function bindDetail() {
   $('detail-flexi').addEventListener('click', () => {
     if (state.detail) openFlexi(state.detail.id);
   });
+  $('detail-base-btn').addEventListener('click', () => {
+    haptic();
+    setBaseOn(!baseOn());
+    syncBaseToggles();
+  });
   $('detail-litho').addEventListener('click', () => {
     if (state.detail) openLitho({ base: state.detail });
   });
@@ -623,7 +684,7 @@ function bindDetail() {
     if (!o) return;
     haptic();
     const format = fileFormat(o) === 'STL' ? '3mf' : 'stl';
-    startJob({ kind: 'model_format', format, title: o.title || '' }, o.title || '3D-модель', false, { project: orderProject(o) });
+    startJob(withBase({ kind: 'model_format', format, title: o.title || '' }, o), o.title || '3D-модель', false, { project: orderProject(o) });
   });
   $('detail-remodel').addEventListener('click', () => {
     const o = state.detail;

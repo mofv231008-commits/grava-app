@@ -139,6 +139,7 @@ function rememberPrompt(orderId, data, thumbs, ask) {
     prompt: data.prompt || '', kind: data.kind, flexi: data.flexi === true, title: data.title || '',
     photos, thumbs: (thumbs || []).slice(0, 3), at: Date.now(),
   };
+  if (data.base) all[orderId].base = data.base; // модель с подставкой — «Пересобрать с подставкой» не нужен
   if (ask && ask.text) all[orderId].ask = { text: ask.text, answers: ask.answers || '' };
   const keys = Object.keys(all).sort((a, b) => all[b].at - all[a].at);
   keys.slice(40).forEach((k) => delete all[k]);

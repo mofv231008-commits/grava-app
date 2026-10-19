@@ -1681,7 +1681,13 @@ body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) +
 /* главный следующий шаг в карточке (например, «Сделать подвижной») */
 .pill.is-main { background: var(--accent); color: var(--on-accent); }
 .result-hint { margin: 8px 2px 0; font-size: 13px; color: var(--text-2); }
-@media (hover: hover) { .pill:not(.is-main):hover { background: var(--border); } .pill.is-main:hover { background: var(--accent-hover); } }
+/* чип-тумблер (подставка): выключен — с рамкой, включён — акцентом и с галочкой */
+.pill.is-toggle { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+.pill.is-toggle.is-on { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent-text); }
+.detail-base { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.detail-base .pill { flex-shrink: 0; }
+.detail-base-sub { font-size: 13px; line-height: 1.35; color: var(--text-2); }
+@media (hover: hover) { .pill:not(.is-main):not(.is-toggle):hover { background: var(--border); } .pill.is-main:hover { background: var(--accent-hover); } }
 
 .job .result-thumb { display: flex; align-items: center; justify-content: center; color: var(--text-2); }
 .job .result-thumb .i { width: 32px; height: 32px; stroke-width: 1.4; }
