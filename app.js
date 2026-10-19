@@ -27,6 +27,8 @@ const state = {
   cadBusy: false,
   flexi: null,      // открытый сборщик шарниров
   flexiBusy: false,
+  litho: null,      // открытый экран «Литофания или барельеф» (litho.js)
+  lithoBusy: false,
 };
 
 function sessionExpired() {
@@ -91,9 +93,11 @@ function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', l
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 function canSend(o) { return isSketch(o) || hasFile(o); } // эскиз бот присылает картинкой, остальное — файлом
 // 3D-модель, которую можно сделать подвижной: не собранная уже на шарнирах и не деталь из конструктора.
-function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && hasFile(o); }
+function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && !lithoKind(o) && hasFile(o); }
 // Сделана в режиме «Подвижная на шарнирах» — «Сделать подвижной» главным действием.
 function flexiMain(o) { return canFlexi(o) && o.flexi === true; }
+// литофания или барельеф — по картинке работы (её превью, у эскиза — сам файл)
+function canLitho(o) { return hasPreview(o) && !isCadDraft(o); }
 
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
@@ -188,6 +192,7 @@ function showScreen(name) {
 function topScreen() {
   if (state.flexi) return 'flexi';
   if (state.cad) return 'cad';
+  if (state.litho) return 'litho';
   if (state.wait) return 'wait';
   if (state.order) return 'order';
   if (state.detail) return 'detail';
@@ -206,6 +211,7 @@ function renderView() {
   $('view-wait').hidden = top !== 'wait';
   $('view-cad').hidden = top !== 'cad';
   $('view-flexi').hidden = top !== 'flexi';
+  $('view-litho').hidden = top !== 'litho';
   $('tabbar').hidden = !inApp || overlay;
   document.body.classList.toggle('no-tabbar', !inApp || overlay);
   const composerOn = inApp && !overlay && state.tab === 'create';
@@ -235,7 +241,7 @@ function renderView() {
   }
 
   // В редакторе рисуют пальцем, в конструкторе крутят 3D — свайп вниз не должен сворачивать приложение.
-  const noSwipes = editorOpen || (inApp && (top === 'cad' || top === 'flexi'));
+  const noSwipes = editorOpen || (inApp && (top === 'cad' || top === 'flexi' || top === 'litho'));
   if (noSwipes !== state.noSwipes) {
     state.noSwipes = noSwipes;
     tg.swipes(!noSwipes);
@@ -246,10 +252,10 @@ function renderView() {
 }
 
 // Кнопки Телеги (или их замена в браузере) под экран, который сейчас сверху.
-// Конструктор и сборщик шарниров управляют MainButton сами.
+// Конструктор, сборщик шарниров и литофания управляют MainButton сами.
 function syncButtons() {
   const top = topScreen();
-  if (top === 'cad' || top === 'flexi') return;
+  if (top === 'cad' || top === 'flexi' || top === 'litho') return;
   if (top || proj.drawer) tg.BackButton.show();
   else tg.BackButton.hide();
   let text = '';
@@ -326,6 +332,7 @@ function workCard(o, names) {
   const thumb = el('div', 'thumb');
   fillPreview(thumb, o);
   if (o.jointed === true) thumb.appendChild(el('span', 'work-badge', 'на шарнирах'));
+  else if (lithoKind(o)) thumb.appendChild(el('span', 'work-badge', lithoKind(o) === 'relief' ? 'барельеф' : 'литофания'));
   else if (isSketch(o)) thumb.appendChild(el('span', 'work-badge is-sketch', isFlexiMode(o) ? 'эскиз · на шарнирах' : 'эскиз'));
   card.appendChild(thumb);
 
@@ -421,11 +428,12 @@ function openDetail(o, opts) {
 // Самая свежая 3D-модель — только у неё есть «Другой формат».
 function isNewestModel(o) {
   const orders = (state.me && state.me.orders) || [];
-  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true);
+  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true && !lithoKind(x));
   return !!newest && String(newest.id) === String(o.id);
 }
 
 function canAsk(o) {
+  if (lithoKind(o)) return false;
   const k = kindOf(o);
   return k === 'sketch' || k === 'laser' || k === 'cad' || o.cad === true;
 }
@@ -450,7 +458,8 @@ function renderDetail() {
 
   const meta = $('detail-meta');
   meta.textContent = '';
-  const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж для лазера', cad: 'Деталь по размерам' }[k];
+  const kindName = lithoKind(o) ? LITHO_NAMES[lithoKind(o)]
+    : { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж для лазера', cad: 'Деталь по размерам' }[k];
   [kindName, k === 'sketch' ? (isFlexiMode(o) ? 'на шарнирах' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
     .filter(Boolean)
     .forEach((text) => meta.appendChild(el('span', '', text)));
@@ -464,6 +473,7 @@ function renderDetail() {
   $('detail-3d').hidden = !can3d;
   // подвижная модель — главная кнопка; остальные 3D-модели — можно попробовать
   $('detail-flexi').hidden = !canFlexi(o) || flexiMain(o);
+  $('detail-litho').hidden = !canLitho(o);
   $('detail-cad').hidden = o.cad !== true; // у черновика детали конструктор — на главной кнопке
   $('detail-resize').hidden = k !== 'laser' || o.cad === true || !hasFile(o);
   if (o.size_mm) {
@@ -472,15 +482,15 @@ function renderDetail() {
     });
   }
   $('detail-ask').hidden = !canAsk(o);
-  // у деталей из конструктора и собранных на шарнирах редактор картинок не нужен
-  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad';
+  // у деталей из конструктора, собранных на шарнирах и литофаний редактор картинок не нужен
+  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o);
   const saved = savedPrompt(o.id);
   $('detail-again').hidden = k !== 'sketch' || !saved || !saved.prompt || (saved.kind && saved.kind !== 'sketch');
   setLabel($('detail-again'), withPrice('Ещё вариант', 'sketch'));
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
   setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
-  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true;
+  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o);
   setLabel($('detail-remodel'), 'Сделать модель заново'); // цена — в подтверждении, чтобы кнопка была в одну строку
 
   $('detail-sent').hidden = !state.detailFresh;
@@ -492,7 +502,8 @@ function renderDetail() {
       : 'Это эскиз. Если нравится — сделай из него 3D-модель. Если нет — измени описанием или попроси ещё вариант.',
     cad: 'Размеры меняются в конструкторе бесплатно. Чтобы изменить форму (отверстие, паз, надпись), нажми «Изменить описанием».',
     laser: 'Файл DXF открывается в LightBurn, RDWorks и других программах для лазера.',
-    model: isStl(o)
+    model: lithoKind(o) ? LITHO_PRINT[lithoKind(o)]
+      : isStl(o)
       ? 'Файл STL открой в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura) — и можно печатать.'
       : 'Файл 3MF здесь не показывается. Нажми «Отправить в Telegram» и открой его в программе для 3D-печати (Bambu Studio, PrusaSlicer, Cura).',
   }[k];
@@ -540,6 +551,7 @@ function goBack() {
   else if (proj.drawer) closeDrawer();
   else if (state.flexi) { if (!flexiBack()) closeFlexi(); } // из редактора шарниров — к результату
   else if (state.cad) closeCad();
+  else if (state.litho) closeLitho();
   else if (state.wait) closeWait();
   else if (state.order) closeOrder();
   else if (state.detail) closeDetail();
@@ -550,6 +562,7 @@ function onMainButton() {
   const top = topScreen();
   if (top === 'flexi') flexiExport();
   else if (top === 'cad') cadExport();
+  else if (top === 'litho') lithoSave();
   else if (top === 'order') submitOrder();
   else if (top === 'detail') onDetailMain();
 }
@@ -577,6 +590,9 @@ function bindDetail() {
   });
   $('detail-flexi').addEventListener('click', () => {
     if (state.detail) openFlexi(state.detail.id);
+  });
+  $('detail-litho').addEventListener('click', () => {
+    if (state.detail) openLitho({ base: state.detail });
   });
   $('detail-edit').addEventListener('click', () => {
     if (state.detail) openOrderInEditor(state.detail);
@@ -1171,6 +1187,7 @@ function bindEvents() {
   bindEditor();
   bindCad();
   bindFlexi();
+  bindLitho();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(onMainButton);

@@ -73,6 +73,7 @@ const MODES = {
   flexi: { icon: 'joint', name: 'Подвижная на шарнирах', about: 'фигурка на шарнирах, печатается одной деталью' },
   cad: { icon: 'ruler', name: 'Деталь', about: 'точные размеры в миллиметрах' },
   scan: { icon: 'scan', name: 'По фото', about: '3–6 фото предмета с разных сторон' },
+  relief: { icon: 'photo', name: 'Рельеф', about: 'литофания или барельеф по фото — бесплатно' },
 };
 const COMPOSER_PLACEHOLDER = 'Опиши, что нужно сделать…';
 
@@ -116,17 +117,18 @@ function shortTitle(text) {
 
 // Подвижная не запоминается: включается только тапом по чипу (или примером «Ящерица на шарнирах»).
 // Иначе режим «залипает» — человек пишет «дракона», не глядя на чип, и получает фигурку из звеньев.
+// «Рельеф» тоже не запоминается — он не про описание, а про одно фото.
 function lastMode() {
   try {
     const m = localStorage.getItem(LAST_MODE_KEY);
     if (m === 'flexi') return '3d'; // запомнили раньше, до этого правила
-    if (m && m !== 'scan' && MODES[m]) return m;
+    if (m && m !== 'scan' && m !== 'relief' && MODES[m]) return m;
   } catch (e) { /* приватный режим */ }
   return 'laser';
 }
 
 function saveLastMode(m) {
-  if (m === 'scan') return; // скан выбирается по фото
+  if (m === 'scan' || m === 'relief') return; // скан выбирается по фото, рельеф — только тапом
   try { localStorage.setItem(LAST_MODE_KEY, m === 'flexi' ? '3d' : m); } catch (e) { /* ок */ }
 }
 
@@ -269,6 +271,13 @@ function composerPlan() {
       return n
         ? { kind: 'cad', ok: false, hint: 'Деталь — по описанию с размерами, фото не нужно' }
         : { kind: 'cad', ok: !!text, hint: '' };
+    case 'relief': // ровно одно фото, текст — подпись, необязательно; кнопка открывает экран литофании
+      return {
+        kind: null,
+        ok: n === 1,
+        hint: n === 1 ? '' : n ? 'Нужно одно фото — убери лишние' : 'Прикрепи фото или картину',
+        litho: true,
+      };
     default: // scan
       return {
         kind: 'scan',
@@ -347,7 +356,7 @@ function renderComposer() {
   const input = $('composer-input');
   input.placeholder = comp.edit
     ? 'Что изменить в «' + (comp.edit.title || 'работе') + '»?'
-    : plan.answer ? 'Или напиши свой вариант…' : COMPOSER_PLACEHOLDER;
+    : plan.answer ? 'Или напиши свой вариант…' : plain && plan.litho ? 'Название — необязательно' : COMPOSER_PLACEHOLDER;
 
   $('composer-modes').hidden = !plain;
   $('composer-clip').hidden = !plain;
@@ -503,6 +512,11 @@ async function composerSend() {
     $('composer-input').value = '';
     renderComposer();
     askAnswerTyped(askCurrent(), text);
+    return;
+  }
+  // «Рельеф»: заказа нет — открываем экран литофании с этим фото. Композер очистится, когда сохранят.
+  if (plan.litho) {
+    openLitho({ src: comp.photos[0], name: text });
     return;
   }
   const data = { kind: plan.kind };
@@ -673,7 +687,8 @@ function resultCard(o) {
   main.appendChild(thumb);
   const info = el('div', 'result-info');
   info.appendChild(el('div', 'result-title', o.title || 'Без названия'));
-  const kindName = { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
+  const kindName = lithoKind(o) ? LITHO_NAMES[lithoKind(o)]
+    : { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
   const meta = [kindName];
   if (kindOf(o) === 'model' || kindOf(o) === 'laser') meta.push(formatLabel(o));
   if (isSketch(o) && isFlexiMode(o)) meta.push('на шарнирах');

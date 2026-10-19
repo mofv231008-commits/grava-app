@@ -271,8 +271,19 @@ async function mockPost(url, params) {
       : add({ kind: dxf ? 'laser' : 'model', mode: dxf ? 'laser' : '3d', format: dxf ? undefined : 'stl', cad: true, size_mm: 80, title: base.title, has_file: true, editable: false, project: base.project || '' });
     return { status: 200, data: { ok: true, id } };
   }
+  // литофания и барельеф: новая работа-модель; снимок — превью в «Моих работах» (пока открыта вкладка)
+  if (url === CAD_API && p.a === 'litho') {
+    const base = db.me.orders.find((x) => x.id === String(p.id)) || {};
+    const id = add({
+      kind: 'model', mode: p.litho, litho: p.litho, format: 'stl', title: p.title || 'Литофания', has_file: true, has_preview: true,
+      editable: false, size_mm: 100, project: p.project || base.project || '',
+    });
+    if (p.snapshot) mockSnapshots[id] = String(p.snapshot);
+    return { status: 200, data: { ok: true, id } };
+  }
   return { status: 200, data: { ok: true } };
 }
+const mockSnapshots = {};
 
 async function mockCreate(data) {
   await mockWait(350);
@@ -392,6 +403,7 @@ const MOCK_COLORS = { sketch: '#f3e3c3', model: '#d7e6f5', laser: '#f5dcd0', cad
 const MOCK_EMOJI = { sketch: '✏️', model: '🧊', laser: '🔥', cad: '📐' };
 
 function mockFileUrl(id) {
+  if (mockSnapshots[id]) return mockSnapshots[id];
   const o = mockState().me.orders.find((x) => x.id === String(id)) || { kind: 'laser', title: '?' };
   const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">'
@@ -505,8 +517,42 @@ function mockLizardStl(flat) {
   return buf;
 }
 
+// Картинка работы для литофании: превью (у эскиза — и сам файл). Портрет 3:4 с плавными тенями.
+async function mockPicture(o) {
+  if (mockSnapshots[o.id]) return new Response(await (await fetch(mockSnapshots[o.id])).blob(), { headers: { 'content-type': 'image/jpeg' } });
+  const c = document.createElement('canvas');
+  c.width = 600;
+  c.height = 800;
+  const x = c.getContext('2d');
+  const sky = x.createLinearGradient(0, 0, 0, 800);
+  sky.addColorStop(0, '#f4efe4');
+  sky.addColorStop(1, '#7c7468');
+  x.fillStyle = sky;
+  x.fillRect(0, 0, 600, 800);
+  x.fillStyle = '#2e2924';
+  x.beginPath();
+  x.ellipse(300, 330, 125, 155, 0, 0, Math.PI * 2);
+  x.ellipse(300, 780, 270, 210, 0, 0, Math.PI * 2);
+  x.fill();
+  const face = x.createRadialGradient(280, 330, 10, 300, 350, 120);
+  face.addColorStop(0, '#f0dcc2');
+  face.addColorStop(1, '#9c8167');
+  x.fillStyle = face;
+  x.beginPath();
+  x.ellipse(300, 355, 88, 112, 0, 0, Math.PI * 2);
+  x.fill();
+  x.fillStyle = '#ffffff';
+  x.font = 'bold 44px sans-serif';
+  x.textAlign = 'center';
+  x.fillText(String(o.title || '').slice(0, 20), 300, 90);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  return new Response(blob, { headers: { 'content-type': 'image/png' } });
+}
+
 async function mockDownload(params) {
   await mockWait(300);
+  const picFor = params.a === 'file' && mockState().me.orders.find((x) => x.id === String(params.id));
+  if (picFor && (params.what === 'preview' || (params.what === 'file' && picFor.kind === 'sketch'))) return mockPicture(picFor);
   if (params.a === 'file' && params.what === 'file') {
     // модель для сборщика шарниров
     const o = mockState().me.orders.find((x) => x.id === String(params.id));
