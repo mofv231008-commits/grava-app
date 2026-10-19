@@ -1709,6 +1709,34 @@ body.kb-open .view-create { padding-bottom: calc(var(--composer-h) + var(--kb) +
 .detail-base-sub { font-size: 13px; line-height: 1.35; color: var(--text-2); }
 .detail-hint { margin: -4px 2px 0; font-size: 13px; color: var(--text-2); text-align: center; }
 
+/* Нижняя шторка (цветная модель) */
+.sheet { position: fixed; inset: 0; z-index: 29; }
+.sheet-scrim { position: absolute; inset: 0; background: var(--overlay); opacity: 0; transition: opacity .2s ease; }
+.sheet-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 8px 16px calc(var(--safe-bottom) + 16px);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg);
+  transform: translateY(100%);
+  transition: transform .22s var(--ease);
+}
+.sheet.is-open .sheet-scrim { opacity: 1; }
+.sheet.is-open .sheet-panel { transform: none; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sheet-title { font-family: var(--serif); font-size: 21px; font-weight: 600; }
+.sheet-sub { margin: 2px 0 6px; font-size: 13.5px; color: var(--text-2); }
+.sheet-field { display: block; margin-top: 14px; }
+.sheet-label { display: block; margin: 0 2px 8px; font-size: 14px; font-weight: 600; }
+.sheet-hint { margin: 6px 2px 0; font-size: 13px; line-height: 1.4; color: var(--text-2); }
+.sheet-field .ed-prompt { display: block; width: 100%; }
+.color-more { margin-top: 8px; }
+.sheet-go { margin-top: 16px; }
+
 /* Деление на части */
 .split-preview { margin: 0; border-radius: var(--radius); }
 .split-status { color: var(--text); }

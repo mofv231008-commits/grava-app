@@ -33,6 +33,7 @@ const state = {
   galleryOpen: false,
   split: null,      // открытый экран «Разделить на части» (split.js)
   splitBusy: false,
+  colorSheet: null, // открытая шторка «Цветная модель» (color.js)
 };
 
 function sessionExpired() {
@@ -97,11 +98,19 @@ function kindIcon(o) { return { cad: 'ruler', model: 'cube', sketch: 'pencil', l
 function hasFile(o) { return !isSketch(o) && !isCadDraft(o) && o.has_file !== false; } // в старых ответах поля нет — файл есть
 function canSend(o) { return isSketch(o) || hasFile(o); } // эскиз бот присылает картинкой, остальное — файлом
 // 3D-модель, которую можно сделать подвижной: не собранная уже на шарнирах и не деталь из конструктора.
-function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && !lithoKind(o) && hasFile(o); }
+function canFlexi(o) { return isModel(o) && o.jointed !== true && o.cad !== true && !lithoKind(o) && o.mode !== 'color' && hasFile(o); }
 // Сделана в режиме «Подвижная на шарнирах» — «Сделать подвижной» главным действием.
 function flexiMain(o) { return canFlexi(o) && o.flexi === true; }
 // литофания или барельеф — по картинке работы (её превью, у эскиза — сам файл)
-function canLitho(o) { return hasPreview(o) && !isCadDraft(o); }
+function canLitho(o) { return hasPreview(o) && !isCadDraft(o) && o.mode !== 'color'; }
+
+// Как называется вид работы на карточке и экране работы. laser — у чертежа (на экране работы — длиннее).
+function kindName(o, laser) {
+  if (lithoKind(o)) return LITHO_NAMES[lithoKind(o)];
+  if (o.mode === 'color') return 'Цветная 3D-модель';
+  if (o.mode === 'split') return 'Модель по частям';
+  return { sketch: '3D-эскиз', model: '3D-модель', laser: laser || 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
+}
 
 /* ---------- Подставка под фигурку ---------- */
 // Сервер сам добавляет овальную подставку (~3 мм, модель чуть утоплена): base: 'oval' в задании model / model_format.
@@ -199,6 +208,7 @@ function rebuildWithBase(o, how) {
 
 function formatLabel(o) {
   if (isSketch(o)) return 'Эскиз'; // «подвижная» — значком на превью
+  if (isColor(o)) return colorLabel(o); // «3MF · цветная · 4 цв.»
   return o.size_mm ? fileFormat(o) + ' · ' + o.size_mm + ' мм' : fileFormat(o);
 }
 
@@ -366,6 +376,12 @@ function renderView() {
 function syncButtons() {
   const top = topScreen();
   if (top === 'cad' || top === 'flexi' || top === 'litho' || top === 'split') return;
+  // шторка «Цветная модель»: своя кнопка «Покрасить», «Назад» её закрывает
+  if (state.colorSheet) {
+    tg.BackButton.show();
+    tg.MainButton.hide();
+    return;
+  }
   if (top || proj.drawer) tg.BackButton.show();
   else tg.BackButton.hide();
   let text = '';
@@ -549,7 +565,7 @@ function openDetail(o, opts) {
 // Самая свежая 3D-модель — только у неё есть «Другой формат».
 function isNewestModel(o) {
   const orders = (state.me && state.me.orders) || [];
-  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true && !lithoKind(x));
+  const newest = orders.find((x) => isModel(x) && x.jointed !== true && x.cad !== true && !lithoKind(x) && x.mode !== 'color');
   return !!newest && String(newest.id) === String(o.id);
 }
 
@@ -585,9 +601,7 @@ function renderDetail() {
 
   const meta = $('detail-meta');
   meta.textContent = '';
-  const kindName = lithoKind(o) ? LITHO_NAMES[lithoKind(o)]
-    : { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж для лазера', cad: 'Деталь по размерам' }[k];
-  [kindName, k === 'sketch' ? (isFlexiMode(o) ? 'на шарнирах' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
+  [kindName(o, 'Чертёж для лазера'), k === 'sketch' ? (isFlexiMode(o) ? 'на шарнирах' : '') : k === 'cad' ? '' : formatLabel(o), formatDate(o.date, true)]
     .filter(Boolean)
     .forEach((text) => meta.appendChild(el('span', '', text)));
 
@@ -601,6 +615,8 @@ function renderDetail() {
   // подвижная модель — главная кнопка; остальные 3D-модели — можно попробовать
   $('detail-flexi').hidden = !canFlexi(o) || flexiMain(o);
   $('detail-litho').hidden = !canLitho(o);
+  $('detail-color').hidden = !canColor(o);
+  setLabel($('detail-color'), 'Сделать цветной · ' + colorPrice());
   $('detail-split').hidden = !canSplit(o);
   $('detail-split-hint').hidden = !canSplit(o);
   $('detail-cad').hidden = o.cad !== true; // у черновика детали конструктор — на главной кнопке
@@ -612,7 +628,7 @@ function renderDetail() {
   }
   $('detail-ask').hidden = !canAsk(o);
   // у деталей из конструктора, собранных на шарнирах и литофаний редактор картинок не нужен
-  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o);
+  $('detail-edit').hidden = o.editable !== true || o.cad === true || o.jointed === true || k === 'cad' || !!lithoKind(o) || isColor(o);
   // «Ещё вариант» — пока в этом проекте рисуется прошлый, второй не отправляем
   const variantBusy = canVariant(o) && projectBusy(orderProject(o));
   $('detail-again').hidden = !canVariant(o);
@@ -622,7 +638,7 @@ function renderDetail() {
   const reformat = k === 'model' && hasFile(o) && o.jointed !== true && isNewestModel(o);
   $('detail-reformat').hidden = !reformat;
   setLabel($('detail-reformat'), 'Другой формат: ' + (fileFormat(o) === 'STL' ? '3MF' : 'STL') + ' · бесплатно');
-  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o);
+  $('detail-remodel').hidden = k !== 'model' || o.cad === true || o.jointed === true || !!lithoKind(o) || isColor(o);
   // подставка — рядом с «Сделать 3D-модель» (и у модели — для «Сделать модель заново» и «Другой формат»)
   $('detail-base').hidden = !canBase(o) || !(k === 'sketch' || reformat || !$('detail-remodel').hidden);
   syncBaseToggles();
@@ -687,6 +703,7 @@ function closeDetail() {
 function goBack() {
   haptic();
   if (state.viewer) closeViewer();
+  else if (state.colorSheet) closeColorSheet();
   else if (proj.drawer) closeDrawer();
   else if (state.flexi) { if (!flexiBack()) closeFlexi(); } // из редактора шарниров — к результату
   else if (state.cad) closeCad();
@@ -744,6 +761,9 @@ function bindDetail() {
   });
   $('detail-split').addEventListener('click', () => {
     if (state.detail) openSplit(state.detail);
+  });
+  $('detail-color').addEventListener('click', () => {
+    if (state.detail) openColorSheet(state.detail, false);
   });
   $('detail-edit').addEventListener('click', () => {
     if (state.detail) openOrderInEditor(state.detail);
@@ -1487,6 +1507,7 @@ function bindEvents() {
   bindLitho();
   bindGallery();
   bindSplit();
+  bindColor();
 
   tg.BackButton.onClick(goBack);
   tg.MainButton.onClick(onMainButton);

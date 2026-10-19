@@ -8,6 +8,7 @@ const API = API_BASE + 'grava-app';
 const JOB_API = API_BASE + 'grava-app-job';
 const EDIT_API = API_BASE + 'grava-app-edit';
 const CAD_API = API_BASE + 'grava-app-cad';
+const COLOR_API = API_BASE + 'grava-app-color';
 const MOCK = /[?&]mock=1(&|$)/.test(location.search);
 
 class ApiError extends Error {
@@ -46,11 +47,11 @@ async function fetchWithTimeout(url, ms, outerSignal, init) {
 
 const isAuth = (status, data) => status === 401 || status === 403 || !!(data && data.error === 'auth');
 
-// POST в grava-app-job: тело payload=<JSON>, тип form-urlencoded — без preflight.
-async function postJob(data, timeoutMs) {
+// POST в grava-app-job (или в другой адрес того же вида — url): тело payload=<JSON>, тип form-urlencoded — без preflight.
+async function postJob(data, timeoutMs, url) {
   const json = JSON.stringify(Object.assign({}, data, authParams()));
   const body = new Blob(['payload=' + encodeURIComponent(json)], { type: 'application/x-www-form-urlencoded' });
-  const res = await fetchWithTimeout(JOB_API, timeoutMs, null, { method: 'POST', body });
+  const res = await fetchWithTimeout(url || JOB_API, timeoutMs, null, { method: 'POST', body });
   let out = null;
   try { out = await res.json(); } catch (e) { /* не JSON */ }
   if (isAuth(res.status, out)) throw new ApiError('auth');
@@ -103,6 +104,17 @@ const Api = {
     if (MOCK) return mockClarify(data);
     const { res, out } = await postJob(Object.assign({ kind: 'clarify' }, data), 15000);
     if (!out || out.ok !== true) throw new ApiError((out && out.error) || 'http_' + res.status, out);
+    return out;
+  },
+
+  // Цветная модель для ACE Pro: { id, colors: 2..8, style: cartoon | realistic, wishes, project } → { ok, job_id, project }.
+  // Дальше — обычное задание (kind 'color'). Ошибки: not_found, not_model, not_supported, no_ref, no_credits.
+  async createColor(data) {
+    const body = { id: data.id, colors: data.colors, style: data.style, wishes: data.wishes || '' };
+    if (data.project) body.project = data.project;
+    if (MOCK) return mockColor(body);
+    const { res, out } = await postJob(body, 90000, COLOR_API);
+    if (!out || out.ok !== true || !out.job_id) throw new ApiError((out && out.error) || 'http_' + res.status, out);
     return out;
   },
 
@@ -171,7 +183,7 @@ const MOCK_KEY = 'grava.mock';
 const MOCK_ORDER_KIND = {
   laser_new: 'laser', laser_photo: 'laser', laser_edit: 'laser', laser_resize: 'laser',
   sketch: 'sketch', sketch_photo: 'sketch', sketch_edit: 'sketch',
-  model: 'model', model_format: 'model', scan: 'model',
+  model: 'model', model_format: 'model', scan: 'model', color: 'model',
   cad: 'cad', cad_edit: 'cad',
 };
 const MOCK_IMAGE_KINDS = ['laser_new', 'laser_photo', 'laser_edit', 'sketch', 'sketch_photo', 'sketch_edit'];
@@ -202,7 +214,7 @@ function mockState() {
         // project: '' — старые работы, до проектов (в списке они в «Ранее»)
         orders: [
           { id: 'o5', kind: 'sketch', sketch: true, mode: '3d_flexi', '3d_flexi': true, title: 'Ящерица', date: day(0), has_preview: true, has_file: false, editable: true, project: '', prompt: 'Ящерица на шарнирах, лапы в стороны' },
-          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false,
+          { id: 'o4', kind: 'model', mode: '3d', title: 'Котик', format: 'stl', size_mm: 80, date: day(1), has_file: true, has_preview: true, editable: true, project: '', prompt: '', flexi: false, color: true,
             notes: [
               { level: 'warn', code: 'tips', text: 'Фигурка может упасть: центр тяжести не над опорой' },
               { level: 'info', code: 'small_foot', text: 'Опора маленькая — включи кайму в программе для печати' },
@@ -350,6 +362,27 @@ async function mockCreate(data) {
   return { ok: true, job_id: job, project };
 }
 
+// Цветная модель: как настоящий сервер — проверки, 3 кредита (?admin=1 — бесплатно), задание готово через 5 секунд.
+async function mockColor(d) {
+  await mockWait(400);
+  const db = mockState();
+  const o = db.me.orders.find((x) => x.id === String(d.id));
+  const fail = (error) => new ApiError(error, { ok: false, error });
+  if (!o) throw fail('not_found');
+  if (o.kind !== 'model') throw fail('not_model');
+  if (o.no_ref) throw fail('no_ref');
+  if (o.color !== true) throw fail('not_supported');
+  if (!/[?&]admin=1/.test(location.search)) {
+    if (db.me.balance < 3) throw fail('no_credits');
+    db.me.balance -= 3;
+  }
+  const project = o.project || d.project || 'p' + (++db.seq) + Math.random().toString(36).slice(2, 6);
+  const job = 'j' + (++db.seq);
+  db.jobs[job] = { data: Object.assign({ kind: 'color' }, d, { project }), polls: 0, started: Date.now() };
+  mockSave();
+  return { ok: true, job_id: job, project };
+}
+
 // Уточнение: короткий запрос — пример про змею, длинный (от 15 символов) — уже понятно.
 async function mockClarify(data) {
   await mockWait(1200);
@@ -396,8 +429,20 @@ function mockStatus(id) {
   const base = { ok: true, job_id: id, kind: d.kind, project: d.project || '', seconds };
   j.polls++;
   mockSave();
-  if (j.polls < 3) return Object.assign(base, { status: 'running', text: '' });
+  const waiting = d.kind === 'color' ? seconds < 5 : j.polls < 3; // цветная — ровно 5 секунд
+  if (waiting) return Object.assign(base, { status: 'running', text: '' });
   if (j.result) return j.result;
+  if (d.kind === 'color') {
+    const from = db.me.orders.find((x) => x.id === String(d.id)) || { title: 'Модель' };
+    const order = {
+      id: 'o' + (++db.seq), kind: 'model', mode: 'color', format: '3mf', colors: d.colors, title: (from.title || 'Модель') + ' (цветная)',
+      date: new Date().toISOString(), has_preview: true, has_file: true, editable: false, project: d.project || '', prompt: '',
+    };
+    db.me.orders.unshift(order);
+    j.result = Object.assign(base, { status: 'done', text: 'Готово', order: mockCopy(order) });
+    mockSave();
+    return j.result;
+  }
 
   const prompt = String(d.prompt || '').toLowerCase();
   if (prompt.indexOf('ошибк') !== -1) {
@@ -447,6 +492,7 @@ function mockOrder(db, d) {
     o.flexi = o.mode === '3d_flexi' || d.flexi === true;
     if (d.base === 'oval' || (from && from.base === 'oval' && d.kind === 'model_format')) o.base = 'oval'; // сервер добавил подставку
     o.notes = []; // проверка печати: всё хорошо
+    if (o.mode === '3d' && d.kind !== 'scan') o.color = true; // такую можно покрасить
   } else {
     o.mode = 'cad';
   }

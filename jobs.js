@@ -21,6 +21,7 @@ const JOB_KINDS = {
   scan: { group: 'model', price: 'model' },
   cad: { group: 'cad', price: 'cad' },
   cad_edit: { group: 'cad', price: 'cad_edit' },
+  color: { group: 'color', price: 'color' }, // цветная модель для ACE Pro — отдельный адрес (Api.createColor)
 };
 
 // Этапы — по таймеру, сервер про них не знает. T — характерное время для полоски, сек.
@@ -29,6 +30,7 @@ const JOB_GROUPS = {
   laser: { icon: 'laser', verb: 'Рисую', eta: 'Обычно это занимает 1–3 минуты', T: 50, stages: [[0, 'Рисую чертёж…'], [30, 'Готовлю файл для лазера…']] },
   model: { icon: 'cube', verb: 'Создаю', eta: 'Обычно это занимает 2–5 минут', T: 170, stages: [[0, 'Создаю 3D-модель…'], [90, 'Проверяю модель для печати…'], [180, 'Почти готово…']] },
   cad: { icon: 'ruler', verb: 'Создаю', eta: 'Обычно это занимает 1–3 минуты', T: 50, stages: [[0, 'Создаю деталь…']] },
+  color: { icon: 'palette', verb: 'Раскрашиваю', eta: 'Обычно это занимает 1–3 минуты', T: 90, stages: [[0, 'Раскрашиваю…'], [60, 'Делю на цвета…']] },
 };
 
 const JOB_ERRORS = {
@@ -42,6 +44,9 @@ const JOB_ERRORS = {
   order: 'Работа не найдена',
   base_order: 'Работа не найдена',
   not_found: 'Работа не найдена',
+  not_model: 'Это не 3D-модель — покрасить можно только модель',
+  not_supported: 'Эту модель нельзя покрасить: подвижные, литофании, детали и уже цветные не красятся',
+  no_ref: 'Цвет доступен для моделей, сделанных после обновления. Сделай модель заново',
 };
 
 const jobs = { list: [], timer: 0, busy: false, stopped: false, ticker: 0 };
@@ -81,6 +86,8 @@ function jobPrice(kind) {
       return p.cad != null ? credits(p.cad) : '';
     case 'cad_edit':
       return p.cad_edit != null ? credits(p.cad_edit) : '';
+    case 'color':
+      return credits(p.color != null ? p.color : 3);
     default:
       return '';
   }
@@ -140,6 +147,7 @@ function rememberPrompt(orderId, data, thumbs, ask) {
     photos, thumbs: (thumbs || []).slice(0, 3), at: Date.now(),
   };
   if (data.base) all[orderId].base = data.base; // модель с подставкой — «Пересобрать с подставкой» не нужен
+  if (data.colors) all[orderId].colors = data.colors; // цветная: «3MF · цветная · 4 цв.»
   if (data.variant) all[orderId].variant = data.variant; // «Ещё вариант» эскиза
   if (ask && ask.text) all[orderId].ask = { text: ask.text, answers: ask.answers || '' };
   const keys = Object.keys(all).sort((a, b) => all[b].at - all[a].at);
@@ -184,6 +192,7 @@ function jobProjectFor(data, origin) {
 // 'inline' — из композера и ленты: экран не меняем, заказ появится в ленте.
 // meta.project — проект, из которого заказали (по умолчанию открытый); meta.from — его экран
 // (viewKey); meta.ask — уточнение, для облачка и строки ответов в ленте.
+// meta.endpoint === 'color' (или kind 'color' — например, «Попробовать ещё раз») — цветная модель, свой адрес.
 async function startJob(data, title, how, meta) {
   if (how === true) how = 'main';
   else if (!how) how = 'overlay';
@@ -202,7 +211,8 @@ async function startJob(data, title, how, meta) {
     $('busy').hidden = false;
   }
   try {
-    const r = await Api.createJob(data);
+    const endpoint = meta.endpoint || (data.kind === 'color' ? 'color' : '');
+    const r = endpoint === 'color' ? await Api.createColor(data) : await Api.createJob(data);
     const j = {
       id: String(r.job_id),
       kind: data.kind,

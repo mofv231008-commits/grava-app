@@ -649,6 +649,7 @@ function resultActions(o) {
   } else if (k === 'model') {
     // сделана подвижной — главный следующий шаг: шарниры поставит приложение
     if (flexiMain(o)) out.push(pill('joint', 'Сделать подвижной', () => openFlexi(o.id), 'is-main'));
+    if (canColor(o)) out.push(pill('palette', 'Сделать цветной · ' + colorPrice(), () => openColorSheet(o, 'inline')));
     if (isStl(o) && hasFile(o)) {
       out.push(pill('rotate', 'Посмотреть в 3D', () => {
         openDetail(o);
@@ -725,9 +726,7 @@ function resultCard(o) {
   main.appendChild(thumb);
   const info = el('div', 'result-info');
   info.appendChild(el('div', 'result-title', o.title || 'Без названия'));
-  const kindName = lithoKind(o) ? LITHO_NAMES[lithoKind(o)]
-    : { sketch: '3D-эскиз', model: '3D-модель', laser: 'Чертёж', cad: 'Деталь по размерам' }[kindOf(o)];
-  const meta = [kindName];
+  const meta = [kindName(o)];
   if (kindOf(o) === 'model' || kindOf(o) === 'laser') meta.push(formatLabel(o));
   if (isSketch(o) && isFlexiMode(o)) meta.push('на шарнирах');
   info.appendChild(el('div', 'result-meta', meta.filter(Boolean).join(' · ')));
@@ -749,7 +748,7 @@ function resultCard(o) {
   return msg;
 }
 
-const JOB_ICONS = { sketch: 'pencil', laser: 'laser', model: 'cube', cad: 'ruler' };
+const JOB_ICONS = { sketch: 'pencil', laser: 'laser', model: 'cube', cad: 'ruler', color: 'palette' };
 
 function jobCard(j) {
   const msg = el('div', 'msg msg-bot');

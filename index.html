@@ -7,7 +7,7 @@
   <title>Грава</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preload" href="fonts/source-serif-4-cyrillic-600-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="style.css?v=27">
+  <link rel="stylesheet" href="style.css?v=28">
   <script src="tg.js?v=2"></script>
 </head>
 <body>
@@ -46,6 +46,7 @@
     <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.8 2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/></symbol>
     <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6.5" r="2.6"/><circle cx="6" cy="17.5" r="2.6"/><path d="M8.3 8 20 17M8.3 16 20 7"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.9-.8 1.9-1.8 0-.5-.2-.9-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8h2.1a4.2 4.2 0 0 0 4.2-4.2c0-3.6-4-6.6-9-6.6z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="10" cy="7.3" r="1.1"/><circle cx="14.5" cy="7.3" r="1.1"/></symbol>
     <symbol id="i-turn" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v4h-4"/></symbol>
     <symbol id="i-compose" viewBox="0 0 24 24"><path d="M11.5 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5v-5.5"/><path d="m17.3 3.7 3 3-8.3 8.3-3.6.6.6-3.6z"/></symbol>
   </svg>
@@ -242,6 +243,7 @@
         <button class="btn btn-secondary btn-wide" id="detail-3d" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-rotate"/></svg><span>Посмотреть в 3D</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-flexi" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-joint"/></svg><span>Попробовать на шарнирах</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-litho" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-photo"/></svg><span>Литофания или барельеф</span></button>
+        <button class="btn btn-secondary btn-wide" id="detail-color" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-palette"/></svg><span>Сделать цветной · 3 кр.</span></button>
         <button class="btn btn-secondary btn-wide" id="detail-split" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg><span>Разделить на части</span></button>
         <p class="detail-hint" id="detail-split-hint" hidden>если модель больше стола принтера</p>
         <button class="btn btn-secondary btn-wide" id="detail-cad" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-ruler"/></svg><span>Открыть конструктор</span></button>
@@ -769,6 +771,48 @@
     </aside>
   </div>
 
+  <!-- Шторка «Цветная модель»: раскраска под катушки ACE Pro (color.js) -->
+  <div class="sheet" id="color-sheet" hidden>
+    <div class="sheet-scrim" id="color-scrim"></div>
+    <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="color-title">
+      <div class="sheet-head">
+        <h2 class="sheet-title" id="color-title">Цветная модель</h2>
+        <button class="icon-btn" id="color-close" type="button" aria-label="Закрыть"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="sheet-sub" id="color-sub"></p>
+      <div class="sheet-field">
+        <span class="sheet-label">Цветов</span>
+        <div class="segmented" id="color-count">
+          <button type="button" data-v="2">2</button>
+          <button type="button" data-v="3">3</button>
+          <button type="button" data-v="4">4</button>
+          <button type="button" data-v="more">больше</button>
+        </div>
+        <div class="segmented color-more" id="color-more" hidden>
+          <button type="button" data-v="5">5</button>
+          <button type="button" data-v="6">6</button>
+          <button type="button" data-v="7">7</button>
+          <button type="button" data-v="8">8</button>
+        </div>
+        <p class="sheet-hint" id="color-count-hint">у ACE Pro 4 катушки</p>
+      </div>
+      <div class="sheet-field">
+        <span class="sheet-label">Стиль</span>
+        <div class="segmented" id="color-style">
+          <button type="button" data-v="cartoon">Мультяшный</button>
+          <button type="button" data-v="realistic">Реалистичный</button>
+        </div>
+        <p class="sheet-hint" id="color-style-hint">ровные пятна цвета, печатается чище</p>
+      </div>
+      <label class="sheet-field" for="color-wishes">
+        <span class="sheet-label">Пожелания <span class="ed-label-sub">необязательно</span></span>
+        <textarea class="ed-prompt" id="color-wishes" rows="2" maxlength="300" placeholder="например: красный дракон с золотым брюхом"></textarea>
+      </label>
+      <p class="sheet-hint">Подставь катушки нужных цветов — слайсер покажет, какой цвет куда</p>
+      <button class="btn btn-primary btn-wide sheet-go" id="color-go" type="button">Покрасить · 3 кр.</button>
+    </section>
+  </div>
+
   <!-- Нижняя панель вкладок -->
   <nav id="tabbar" class="tabbar" hidden>
     <button class="tab is-active" data-tab="create" type="button"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Создать</span></button>
@@ -812,10 +856,10 @@
     </div>
   </div>
 
-  <script src="api.js?v=13"></script>
-  <script src="app.js?v=21"></script>
-  <script src="jobs.js?v=7"></script>
-  <script src="create.js?v=12"></script>
+  <script src="api.js?v=14"></script>
+  <script src="app.js?v=23"></script>
+  <script src="jobs.js?v=8"></script>
+  <script src="create.js?v=14"></script>
   <script src="projects.js?v=1"></script>
   <script src="gallery.js?v=1"></script>
   <script src="ask.js?v=1"></script>
@@ -824,5 +868,6 @@
   <script src="flexi.js?v=17"></script>
   <script src="litho.js?v=1"></script>
   <script src="split.js?v=1"></script>
+  <script src="color.js?v=1"></script>
 </body>
 </html>
