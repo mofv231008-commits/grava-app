@@ -482,6 +482,8 @@ function mockOrder(db, d) {
     if (d.variant) o.variant = d.variant; // «Ещё вариант»
     o.mode = d.flexi || (from && from.mode === '3d_flexi') ? '3d_flexi' : '3d';
     if (o.mode === '3d_flexi') o['3d_flexi'] = true;
+    else if (d.kind === 'sketch_photo') o.mode = '3d_photo'; // как у настоящего сервера: эскиз по фото
+    else if (d.kind === 'sketch_edit') o.mode = '3d_edit';   // и после правки (в prompt — текст правки)
   } else if (kind === 'laser') {
     o.mode = 'laser';
     o.size_mm = d.size_mm || (from && from.size_mm) || 150;

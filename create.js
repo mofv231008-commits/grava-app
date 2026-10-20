@@ -686,9 +686,10 @@ function projectBusy(pid) {
   return jobs.list.some((j) => j.status === 'running' && (j.project || OLD_PROJECT) === pid);
 }
 
-// у старых работ запроса нет — вариант делать не из чего
+// Только у эскизов по тексту: у правки (3d_edit) в prompt — текст правки, у эскиза по фото (3d_photo) фото не уйдёт;
+// у старых работ запроса нет — вариант делать не из чего.
 function canVariant(o) {
-  return kindOf(o) === 'sketch' && !!String(o.prompt || '').trim();
+  return kindOf(o) === 'sketch' && ['3d', '3d_flexi'].includes(o.mode) && !!String(o.prompt || '').trim();
 }
 
 function isVariant(o) {
