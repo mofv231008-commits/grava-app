@@ -385,7 +385,8 @@ function syncButtons() {
     tg.MainButton.hide();
     return;
   }
-  if (top || proj.drawer) tg.BackButton.show();
+  // «Редактор» больше не вкладка: открыт из работы — «назад» возвращает туда, откуда пришли
+  if (top || proj.drawer || state.tab === 'editor') tg.BackButton.show();
   else tg.BackButton.hide();
   let text = '';
   if (top === 'order') text = orderMainText();
@@ -407,7 +408,7 @@ function mainButtonColors(active) {
 
 // Шапка и фон Телеги — под тему; при смене темы перекрашиваем и главную кнопку.
 function paintChrome() {
-  tg.paint(themeColor('--bg'));
+  tg.paint(themeColor('--bg'), themeColor('--chrome'));
   if (!$('app').hidden) syncButtons();
 }
 
@@ -416,6 +417,7 @@ function setTab(tab) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
+  if (tab === 'editor' && state.tab !== 'editor') state.editorFrom = state.tab;
   state.tab = tab;
   renderView();
   window.scrollTo(0, 0);
@@ -425,7 +427,7 @@ function setTab(tab) {
 function showFatal(err) {
   const auth = err && err.code === 'auth';
   const network = err && err.code === 'network';
-  $('fatal-emoji').textContent = auth ? '⌛' : '😕';
+  $('fatal-emoji').replaceChildren(icon(auth ? 'clock' : 'alert'));
   $('fatal-text').textContent = auth
     ? 'Сессия устарела. Закрой приложение и открой его заново из бота @grava_ai_bot'
     : network
@@ -716,6 +718,7 @@ function goBack() {
   else if (state.order) closeOrder();
   else if (state.detail) closeDetail();
   else if (state.idea) closeIdea();
+  else if (state.tab === 'editor') setTab(state.editorFrom && state.editorFrom !== 'editor' ? state.editorFrom : 'works');
 }
 
 // Одна кнопка Телеги на все экраны — что она делает, решает экран сверху.
@@ -910,7 +913,14 @@ function renderBalance() {
   const prices = me.prices || {};
 
   $('bal-value').textContent = formatNumber(balance);
-  $('bal-free').textContent = 'Бесплатно сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0);
+  // «Бесплатно сегодня»: полоски (сколько осталось) и «2 из 3»
+  const perDay = Number(me.free_per_day) || 0;
+  const freeLeft = Math.min(perDay, Number(me.free_left) || 0);
+  $('bal-free-row').hidden = me.free_per_day == null;
+  $('bal-free').textContent = freeLeft + ' из ' + perDay;
+  const segs = $('bal-segs');
+  segs.textContent = '';
+  for (let i = 0; i < Math.min(perDay, 10); i++) segs.appendChild(el('span', i < freeLeft ? 'is-on' : ''));
   $('price-image').textContent = credits(prices.image != null ? prices.image : 1);
   $('price-model').textContent = credits(prices.model != null ? prices.model : 4);
 
@@ -925,9 +935,9 @@ function renderBalance() {
   if (cadPrice != null) {
     $('price-cad').textContent = credits(cadPrice);
     $('price-cad-note').hidden = me.free_cad !== true;
-    $('price-cad-edit').textContent = prices.cad_edit != null ? 'изменение описанием — ' + credits(prices.cad_edit) : '';
-    $('price-cad-edit').hidden = prices.cad_edit == null;
+    $('price-cad-edit').textContent = prices.cad_edit != null ? credits(prices.cad_edit) : '';
   }
+  $('price-cad-edit-row').hidden = cadPrice == null || prices.cad_edit == null;
 
   // Поштучно оплаченные 3D-модели. Нет поля или 0 — строку не показываем.
   const modelsLeft = Number(me.models_left) || 0;
@@ -935,7 +945,10 @@ function renderBalance() {
   $('bal-models').hidden = modelsLeft <= 0;
 
   document.querySelectorAll('.balance-chip').forEach((chip) => {
-    chip.textContent = 'Баланс: ' + credits(balance);
+    chip.textContent = '';
+    chip.appendChild(el('span', 'stat-dot'));
+    chip.appendChild(document.createTextNode(formatNumber(balance) + ' кр.'));
+    chip.setAttribute('aria-label', 'Баланс: ' + credits(balance));
     chip.hidden = false;
   });
 
@@ -946,23 +959,34 @@ function renderBalance() {
   const box = $('packs');
   box.textContent = '';
 
+  // Звезда Telegram — иконкой, не эмодзи
+  const starLine = (stars, note) => {
+    const line = el('div', 'pack-stars');
+    const ic = icon('star');
+    ic.classList.add('star-ico');
+    line.appendChild(ic);
+    line.appendChild(el('b', '', formatNumber(stars)));
+    if (note) line.appendChild(el('span', '', note));
+    return line;
+  };
+  box.classList.toggle('is-grid', packs.length > 1);
   packs.forEach((p) => {
-    const card = el('div', 'pack');
-    const info = el('div', 'pack-info');
-
-    // Самый выгодный пакет: бейдж «выгодно» и единственная акцентная кнопка на экране.
+    // Самый выгодный пакет: бейдж «выгоднее», рамка и единственная акцентная кнопка на экране.
     const best = packs.length > 1 && perCredit(p) === minPer && (1 - minPer / maxPer) >= 0.05;
-    // «10 кредитов — 200 ⭐»
-    const title = el('div', 'pack-title', credits(p.credits) + ' — ' + formatNumber(p.stars) + ' ⭐');
-    if (best) title.appendChild(el('span', 'pack-badge', 'выгодно'));
-    info.appendChild(title);
-    info.appendChild(el('div', 'pack-price', formatNumber(perCredit(p)) + ' ⭐ за кредит'));
+    const card = el('div', 'pack' + (best ? ' is-best' : ''));
+    if (best) card.appendChild(el('span', 'pack-badge', 'выгоднее'));
+    // «10 кредитов» — число крупно, слово мельче
+    const head = el('div', 'pack-head');
+    head.appendChild(el('span', 'pack-num', formatNumber(p.credits)));
+    head.appendChild(el('span', 'pack-unit', credits(p.credits).replace(/^[\d\s\u00a0.,]+/, '')));
+    card.appendChild(head);
+    card.appendChild(starLine(p.stars, ''));
+    const per = perCredit(p);
+    card.appendChild(el('div', 'pack-price', (Number.isInteger(per) ? '' : '≈') + Math.round(per) + ' за кредит'));
 
-    const btn = el('button', 'btn ' + (best || packs.length === 1 ? 'btn-primary' : 'btn-secondary'), 'Купить');
+    const btn = el('button', 'btn btn-wide ' + (best || packs.length === 1 ? 'btn-primary' : 'btn-secondary'), 'Купить');
     btn.type = 'button';
     btn.addEventListener('click', () => buy(p, btn));
-
-    card.appendChild(info);
     card.appendChild(btn);
     box.appendChild(card);
   });
@@ -972,8 +996,9 @@ function renderBalance() {
   if (one && one.id && Number(one.stars) > 0) {
     const card = el('div', 'pack pack-single');
     const info = el('div', 'pack-info');
-    info.appendChild(el('div', 'pack-title', 'Одна 3D-модель\u00a0—\u00a0' + formatNumber(one.stars) + '\u00a0⭐'));
-    info.appendChild(el('div', 'pack-price', 'Без пакета. В пакете 10 кредитов модель выходит дешевле'));
+    info.appendChild(el('div', 'pack-title', 'Одна 3D-модель'));
+    info.appendChild(starLine(one.stars, 'без пакета'));
+    info.appendChild(el('div', 'pack-price', 'В пакете 10 кредитов модель выходит дешевле'));
 
     const btn = el('button', 'btn btn-secondary', 'Купить');
     btn.type = 'button';
@@ -1004,7 +1029,7 @@ async function buy(pack, btn) {
     tg.openInvoice(data.link, (status) => {
       if (status === 'paid') {
         hapticNotify('success');
-        toast('Оплата прошла 🎉');
+        toast('Оплата прошла — кредиты начислены');
         setTimeout(() => refreshAfterPayment(before, 1), 2000);
       } else if (status === 'pending') {
         toast('Платёж обрабатывается…');
@@ -1415,7 +1440,7 @@ async function viewerThin() {
     thinShow(s, r);
     lines.push('Найдено тонких мест: ' + r.spots.length + '. Там лучше утолщить или печатать с поддержками');
   } else {
-    toast('Тонких мест нет 👍');
+    toast('Тонких мест нет');
   }
   if (r.thinShare > 0.15) lines.push('Модель в целом тонкая — сделай её крупнее (размер больше)');
   hapticNotify(lines.length ? 'warning' : 'success');

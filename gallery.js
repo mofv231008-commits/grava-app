@@ -74,13 +74,16 @@ function renderGallery() {
   $('gallery-error-text').textContent = gallery.error;
   $('gallery-empty').hidden = !items || items.length > 0 || !!gallery.error;
   grid.textContent = '';
-  (items || []).forEach((it) => grid.appendChild(galleryCard(it)));
+  // первая работа — крупно, с запросом и кнопкой «Сделать такую же»
+  (items || []).forEach((it, i) => grid.appendChild(galleryCard(it, i === 0 && items.length > 1)));
 }
 
-function galleryCard(it) {
-  const card = el('div', 'work idea-card');
-  card.setAttribute('role', 'button');
-  card.tabIndex = 0;
+function galleryCard(it, featured) {
+  const card = el('div', 'work idea-card' + (featured ? ' is-featured' : ''));
+  if (!featured) { // у крупной карточки своя кнопка — карточка-кнопка с кнопкой внутри сбивает экранный диктор
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+  }
   const thumb = el('div', 'thumb');
   fillPreview(thumb, galleryOrder(it));
   if (it.mine === true) thumb.appendChild(el('span', 'work-badge is-sketch', 'твоя'));
@@ -88,6 +91,20 @@ function galleryCard(it) {
   const body = el('div', 'work-body');
   body.appendChild(el('div', 'work-title', it.title || 'Без названия'));
   body.appendChild(el('div', 'work-meta', galleryType(it)));
+  if (featured) {
+    const prompt = String(it.prompt || '').trim();
+    if (prompt) body.appendChild(el('p', 'idea-quote', '«' + prompt + '»'));
+    const use = el('button', 'btn btn-primary btn-wide idea-use');
+    use.type = 'button';
+    use.appendChild(icon('sparkle'));
+    use.appendChild(el('span', '', 'Сделать такую же'));
+    use.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.idea = it;
+      ideaUse();
+    });
+    body.appendChild(use);
+  }
   if (gallery.admin) {
     const rm = el('button', 'idea-remove', 'Убрать');
     rm.type = 'button';
