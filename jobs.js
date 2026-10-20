@@ -369,7 +369,7 @@ async function jobDone(j, r) {
     else if (order.kind === 'cad') openCad(order.id);
     else openDetail(findOrder(order.id) || orderFromJob(order, j), { fresh: true });
   } else {
-    toast('✅ Готово: ' + title);
+    toast('Готово: ' + title);
   }
 }
 
@@ -459,10 +459,37 @@ function renderWaitTick() {
   if (!j || j.status !== 'running') return;
   const g = jobGroup(j.kind);
   $('wait-stage').textContent = jobStage(j);
+  renderWaitSteps(j);
   $('wait-eta').textContent = (JOB_KINDS[j.kind] || {}).stages ? '' : g.eta;
   // Плавно ползёт к 95 % и там ждёт — честнее, чем застрявшие 100 %.
   const p = 0.95 * (1 - Math.exp(-jobElapsed(j) / g.T));
   $('wait-bar').style.width = (p * 100).toFixed(1) + '%';
+}
+
+// Этапы списком: что уже сделано (галочка), что сейчас (светится) и что дальше. Один этап — просто строкой.
+function renderWaitSteps(j) {
+  const stages = (JOB_KINDS[j.kind] || {}).stages || jobGroup(j.kind).stages;
+  const list = $('wait-steps');
+  const multi = stages.length > 1;
+  list.hidden = !multi;
+  $('wait-stage').hidden = multi;
+  if (!multi) return;
+  const t = jobElapsed(j);
+  let cur = 0;
+  stages.forEach((s, i) => { if (t >= s[0]) cur = i; });
+  const key = j.id + ':' + cur;
+  if (list.dataset.key === key) return;
+  list.dataset.key = key;
+  list.textContent = '';
+  stages.forEach((s, i) => {
+    const li = el('li', i < cur ? 'is-done' : i === cur ? 'is-now' : 'is-next');
+    const mark = el('span', 'wait-step-mark');
+    if (i < cur) mark.appendChild(icon('check'));
+    li.appendChild(mark);
+    li.appendChild(el('span', '', i === cur ? s[1] : s[1].replace(/…$/, '')));
+    if (i === cur) li.setAttribute('aria-current', 'step');
+    list.appendChild(li);
+  });
 }
 
 // Раз в секунду — этапы на экране ожидания и в карточках ленты.

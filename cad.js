@@ -268,7 +268,9 @@ function openCad(id) {
   $('cad-error').hidden = true;
   $('cad-dims').textContent = '';
   $('cad-stage').textContent = '';
-  $('cad-stage').appendChild(el('div', 'cad-empty', '📐'));
+  const empty = el('div', 'cad-empty');
+  empty.appendChild(icon('ruler'));
+  $('cad-stage').appendChild(empty);
   $('cad-busy').hidden = true;
   renderView();
   window.scrollTo(0, 0);
@@ -313,7 +315,7 @@ function cadSetData(data) {
   c.format = cadFormat(data);
   c.fixesLeft = Number(data.fixes_left) || 0;
   $('cad-title').textContent = data.title || 'Деталь по размерам';
-  $('cad-format').textContent = c.format === 'dxf' ? '🔥 DXF для лазера' : '🧊 STL для 3D-принтера';
+  $('cad-format').textContent = c.format === 'dxf' ? 'DXF для лазера' : 'STL для 3D-принтера';
   $('cad-format').hidden = false;
   $('cad-preview').classList.toggle('is-sheet', c.format === 'dxf');
   setLabel($('cad-ask'), withPrice('Изменить описанием', 'cad_edit'));

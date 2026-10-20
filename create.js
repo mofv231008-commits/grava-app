@@ -66,14 +66,14 @@ const EDIT_PLACEHOLDERS = {
   cad_edit: 'например: добавь паз 10×3 посередине',
 };
 
-// Режимы композера: иконка, название и подсказка мелко под чипсами.
+// Режимы: иконка, название на кнопке композера (short), плитка (tile + sub мелко) и подсказка под полем.
 const MODES = {
-  laser: { icon: 'laser', name: 'Лазер', about: 'чертёж для резки и гравировки, файл DXF' },
-  '3d': { icon: 'cube', name: '3D', about: 'сначала эскиз, потом 3D-модель для печати' },
-  flexi: { icon: 'joint', name: 'Подвижная на шарнирах', about: 'фигурка на шарнирах, печатается одной деталью' },
-  cad: { icon: 'ruler', name: 'Деталь', about: 'точные размеры в миллиметрах' },
-  scan: { icon: 'scan', name: 'По фото', about: '3–6 фото предмета с разных сторон' },
-  relief: { icon: 'photo', name: 'Рельеф', about: 'литофания или барельеф по фото — бесплатно' },
+  laser: { icon: 'laser', name: 'Лазер', short: 'Лазер', tile: 'Лазер', sub: 'DXF', about: 'чертёж для резки и гравировки, файл DXF' },
+  '3d': { icon: 'cube', name: '3D', short: '3D', tile: '3D-фигурка', sub: 'STL', about: 'сначала эскиз, потом 3D-модель для печати' },
+  flexi: { icon: 'joint', name: 'Подвижная на шарнирах', short: 'Шарниры', tile: 'На шарнирах', sub: 'подвижная', about: 'фигурка на шарнирах, печатается одной деталью' },
+  cad: { icon: 'ruler', name: 'Деталь', short: 'Деталь', tile: 'Деталь', sub: 'по размерам', about: 'точные размеры в миллиметрах' },
+  scan: { icon: 'scan', name: 'По фото', short: 'По фото', tile: 'По фото', sub: 'скан', about: '3–6 фото предмета с разных сторон' },
+  relief: { icon: 'photo', name: 'Рельеф', short: 'Рельеф', tile: 'Рельеф', sub: 'литофания', about: 'литофания или барельеф по фото — бесплатно' },
 };
 const COMPOSER_PLACEHOLDER = 'Опиши, что нужно сделать…';
 
@@ -98,6 +98,7 @@ const comp = {
   format: '',          // деталь: stl | dxf | '' (сам реши)
   photoMode: 'redraw', // лазер по фото: перерисовать или обвести
   sending: false,
+  modesOpen: false,    // раскрыт выбор режима над полем (кнопка «Лазер ▾»)
 };
 
 function editKind(o) {
@@ -158,10 +159,14 @@ function renderCreate() {
   sub.textContent = '';
   if (me) {
     if (me.free_per_day != null) {
-      sub.appendChild(document.createTextNode('Бесплатно сегодня: ' + (me.free_left || 0) + ' из ' + (me.free_per_day || 0) + ' · '));
+      const free = el('span', 'stat');
+      free.appendChild(el('span', 'stat-dot'));
+      free.appendChild(document.createTextNode((me.free_left || 0) + ' из ' + (me.free_per_day || 0) + ' бесплатно сегодня'));
+      sub.appendChild(free);
     }
-    const bal = el('button', '', 'Баланс: ' + credits(Number(me.balance) || 0));
+    const bal = el('button', 'stat', credits(Number(me.balance) || 0));
     bal.type = 'button';
+    bal.setAttribute('aria-label', 'Баланс: ' + credits(Number(me.balance) || 0));
     bal.addEventListener('click', () => {
       haptic();
       setTab('balance');
@@ -358,13 +363,19 @@ function renderComposer() {
     ? 'Что изменить в «' + (comp.edit.title || 'работе') + '»?'
     : plan.answer ? 'Или напиши свой вариант…' : plain && plan.litho ? 'Название — необязательно' : COMPOSER_PLACEHOLDER;
 
-  $('composer-modes').hidden = !plain;
+  // режим: на пустом экране — плитка в приветствии, в ленте — кнопка «Лазер ▾», раскрывающая ту же плитку над полем
+  const feedEmpty = document.body.classList.contains('feed-empty');
+  if (!plain || feedEmpty) comp.modesOpen = false;
+  $('composer-modes').hidden = !comp.modesOpen;
+  $('composer-mode').hidden = !plain;
+  $('composer-mode').setAttribute('aria-expanded', comp.modesOpen ? 'true' : 'false');
+  $('composer-mode-name').textContent = MODES[comp.mode].short;
+  $('composer-mode-icon').querySelector('use').setAttribute('href', '#i-' + MODES[comp.mode].icon);
   $('composer-clip').hidden = !plain;
-  document.querySelectorAll('#composer-modes .mode').forEach((b) => {
+  document.querySelectorAll('.mode-tile[data-mode]').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.mode === comp.mode);
     b.setAttribute('aria-pressed', b.dataset.mode === comp.mode ? 'true' : 'false');
   });
-  modeIntoView();
 
   // Маленький выбор под полем: формат детали или как перевести фото для лазера.
   const opts = $('composer-opts');
@@ -405,15 +416,27 @@ function renderComposer() {
   composerAutosize();
 }
 
-// Выбранный режим не должен прятаться за краем ряда чипсов.
-function modeIntoView() {
-  const row = $('composer-modes');
-  const chip = row.querySelector('.mode.is-active');
-  if (!chip || row.hidden || !row.clientWidth) return;
-  const left = chip.offsetLeft - row.offsetLeft;
-  const right = left + chip.offsetWidth;
-  if (left < row.scrollLeft) row.scrollLeft = Math.max(0, left - 8);
-  else if (right > row.scrollLeft + row.clientWidth - 18) row.scrollLeft = right - row.clientWidth + 22;
+// Плитки режимов: в приветствии пустого проекта и в выборе над полем композера.
+function buildModeTiles(box) {
+  box.textContent = '';
+  Object.keys(MODES).forEach((m) => {
+    const b = el('button', 'mode-tile');
+    b.type = 'button';
+    b.dataset.mode = m;
+    b.appendChild(icon(MODES[m].icon));
+    const t = el('span');
+    t.appendChild(el('span', 'mode-tile-name', MODES[m].tile));
+    t.appendChild(el('span', 'mode-tile-sub', MODES[m].sub));
+    b.appendChild(t);
+    b.addEventListener('click', () => {
+      haptic();
+      comp.mode = m;
+      comp.manual = true;
+      comp.modesOpen = false;
+      renderComposer();
+    });
+    box.appendChild(b);
+  });
 }
 
 function composerAutosize() {
@@ -847,14 +870,14 @@ function composerFromJob(j) {
 
 function examplesBlock() {
   const wrap = el('div', 'examples');
-  wrap.appendChild(el('p', 'examples-title', 'Попробуй, например:'));
+  wrap.appendChild(el('p', 'examples-title', 'Попробуй, например'));
   EXAMPLES.forEach((x) => {
     const b = el('button', 'example');
     b.type = 'button';
-    b.appendChild(icon(MODES[x.mode].icon));
     const t = el('span', '', x.text);
     t.appendChild(el('small', '', x.note));
     b.appendChild(t);
+    b.appendChild(icon('arrow-ur'));
     b.addEventListener('click', () => {
       haptic();
       comp.mode = x.mode;
@@ -907,6 +930,7 @@ function renderFeed() {
     if (nearBottom && state.createOpen) feedToBottom(false);
   }
   $('hello').hidden = !empty; // приветствие — только у пустого проекта
+  document.body.classList.toggle('feed-empty', empty); // пустой проект: режимы — плиткой в приветствии
   renderAsk();
   renderTopbar();
   if (proj.drawer) renderDrawer();
@@ -923,7 +947,9 @@ function feedTick() {
 
 function feedToBottom(smooth) {
   requestAnimationFrame(() => {
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    // пустой проект — приветствие и режимы сверху, листать вниз нечего
+    const top = document.body.classList.contains('feed-empty') ? 0 : document.documentElement.scrollHeight;
+    window.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
   });
 }
 
@@ -1311,13 +1337,12 @@ function bindComposer() {
   });
   input.addEventListener('focus', () => setTimeout(syncViewport, 50));
   input.addEventListener('blur', () => setTimeout(syncViewport, 50));
-  document.querySelectorAll('#composer-modes .mode').forEach((b) => {
-    b.addEventListener('click', () => {
-      haptic();
-      comp.mode = b.dataset.mode;
-      comp.manual = true;
-      renderComposer();
-    });
+  buildModeTiles($('hello-modes'));
+  buildModeTiles($('composer-modes'));
+  $('composer-mode').addEventListener('click', () => {
+    haptic();
+    comp.modesOpen = !comp.modesOpen;
+    renderComposer();
   });
   $('composer-flexi-off').addEventListener('click', () => {
     haptic();

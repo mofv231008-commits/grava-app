@@ -194,8 +194,8 @@ const tg = (() => {
       w.ready();
       w.expand();
     },
-    // Шапка, фон и нижняя полоса Телеги — цветом фона приложения.
-    paint(bg) {
+    // Шапка и фон Телеги — цветом фона приложения, нижняя полоса — цветом нашей панели вкладок.
+    paint(bg, bottom) {
       if (!inside) {
         let meta = document.querySelector('meta[name="theme-color"]');
         if (!meta) {
@@ -211,7 +211,7 @@ const tg = (() => {
         else if (supports('6.1')) w.setHeaderColor('bg_color');
       } catch (e) { /* ок */ }
       try { if (supports('6.1')) w.setBackgroundColor(bg); } catch (e) { /* ок */ }
-      try { if (supports('7.10') && w.setBottomBarColor) w.setBottomBarColor(bg); } catch (e) { /* ок */ }
+      try { if (supports('7.10') && w.setBottomBarColor) w.setBottomBarColor(bottom || bg); } catch (e) { /* ок */ }
     },
     // Видимая высота: в Телеге — viewportStableHeight, в браузере — visualViewport (клавиатура её уменьшает).
     visibleHeight() {
